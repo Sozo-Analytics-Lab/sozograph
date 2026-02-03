@@ -1,0 +1,9 @@
+{
+  "path": "/users/u1/preferences",
+  "value": {
+    "updatedAt": 1738574100000,
+    "tone": "direct",
+    "detail_level": "high",
+    "communication_style": "concise"
+  }
+}
