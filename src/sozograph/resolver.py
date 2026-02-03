@@ -98,6 +98,9 @@ def _upsert_kv_with_temporal_priority(
 
     current = items[idx]
 
+    # Always canonicalize stored key once matched (fixes "Tone" lingering forever)
+    current.key = key
+
     # If value same, keep the most recent ts/confidence optionally
     if _value_equal(current.value, incoming.value):
         # Keep the latest ts (if incoming is newer) and max confidence
@@ -136,6 +139,7 @@ def _upsert_kv_with_temporal_priority(
         source_new=current.source,
     )
     contradictions.append(c)
+    items[idx] = current
     return False, c
 
 
@@ -254,7 +258,6 @@ def merge_passport_update(
             stats.open_loops_added += 1
 
     # Keep deterministic ordering: sort facts/prefs by key, then ts desc
-    # Use the same key-normalization for ordering as merge identity.
     base.facts.sort(key=lambda x: (_norm_key(x.key), -x.ts.timestamp()))
     base.prefs.sort(key=lambda x: (_norm_key(x.key), -x.ts.timestamp()))
     base.entities.sort(key=lambda x: (_entity_key(x.name), x.type))
