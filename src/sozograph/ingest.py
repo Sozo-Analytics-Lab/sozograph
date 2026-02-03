@@ -115,7 +115,7 @@ class FallbackSummarizer:
                 types.Content(role="system", parts=[types.Part(text=FALLBACK_SUMMARIZER_SYSTEM_PROMPT)]),
                 types.Content(role="user", parts=[types.Part(text=prompt)]),
             ],
-            config=types.GenerationConfig(
+            config=types.GenerationContentConfig(
                 temperature=0.2,
             ),
         )
