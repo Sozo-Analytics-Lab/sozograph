@@ -25,7 +25,7 @@ def _require_api_key(passed: Optional[str]) -> str:
 
 
 def _default_extractor_model() -> str:
-    return os.getenv("SOZOGRAPH_EXTRACTOR_MODEL", "gemini-3-flash")
+    return os.getenv("SOZOGRAPH_EXTRACTOR_MODEL", "gemini-3-flash-preview")
 
 
 def _default_context_budget() -> int:
