@@ -49,7 +49,7 @@ class SozoGraph:
         *,
         api_key: Optional[str] = None,
         extractor_model: Optional[str] = None,
-        fallback_model: str = "gemini-3-flash",
+        fallback_model: str = "gemini-3-flash-preview",
         enable_fallback_summarizer: Optional[bool] = None,
         max_interaction_chars: Optional[int] = None,
     ):
