@@ -13,8 +13,10 @@ from .schema import (
 )
 from .utils import normalize_key
 
+
 def _norm_key(key: str) -> str:
-    return key.strip().lower()
+    # Canonical key identity for truth-layer merges
+    return (key or "").strip().lower()
 
 
 @dataclass
@@ -72,7 +74,7 @@ def _merge_entity(existing: Entity, incoming: Entity) -> Entity:
 def _upsert_kv_with_temporal_priority(
     *,
     items: List[Any],  # list[Fact] or list[Preference]
-    incoming: Any,     # Fact or Preference
+    incoming: Any,  # Fact or Preference
     contradictions: List[Contradiction],
     is_fact: bool,
 ) -> Tuple[bool, Optional[Contradiction]]:
@@ -80,12 +82,13 @@ def _upsert_kv_with_temporal_priority(
     Upsert by key. If value changes, latest ts wins and we record contradiction.
     Returns (updated, contradiction_or_none).
     """
-    key = normalize_key(incoming.key)
+    # IMPORTANT: normalize incoming key to prevent "Tone" vs "tone" duplication
+    key = _norm_key(incoming.key)
     incoming.key = key
 
     idx = None
     for i, it in enumerate(items):
-        if normalize_key(it.key) == key:
+        if _norm_key(it.key) == key:
             idx = i
             break
 
@@ -251,11 +254,12 @@ def merge_passport_update(
             stats.open_loops_added += 1
 
     # Keep deterministic ordering: sort facts/prefs by key, then ts desc
-    base.facts.sort(key=lambda x: (normalize_key(x.key), -x.ts.timestamp()))
-    base.prefs.sort(key=lambda x: (normalize_key(x.key), -x.ts.timestamp()))
+    # Use the same key-normalization for ordering as merge identity.
+    base.facts.sort(key=lambda x: (_norm_key(x.key), -x.ts.timestamp()))
+    base.prefs.sort(key=lambda x: (_norm_key(x.key), -x.ts.timestamp()))
     base.entities.sort(key=lambda x: (_entity_key(x.name), x.type))
-    base.open_loops.sort(key=lambda x: (-x.ts.timestamp(), x.item.lower()))
-    base.contradictions.sort(key=lambda x: (normalize_key(x.key), -x.ts_new.timestamp()))
+    base.open_loops.sort(key=lambda x: (-x.ts.timestamp(), (x.item or "").lower()))
+    base.contradictions.sort(key=lambda x: (_norm_key(x.key), -x.ts_new.timestamp()))
 
     base.touch()
     return base, stats
