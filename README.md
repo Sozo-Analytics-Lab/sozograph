@@ -1,6 +1,4 @@
-Here’s the properly structured README.md in a single markdown block you can paste directly into GitHub:
 
-```markdown
 # SozoGraph (v1) — The Cognitive Passport
 
 **SozoGraph** turns interaction history (transcripts + DB objects) into a **portable cognitive snapshot** you can pass into any AI agent context on the fly.
@@ -268,6 +266,3 @@ We want contributions, but keep v1 disciplined.
 
 MIT — Sozo Analytics Lab
 
-```
-This will render perfectly on GitHub with proper heading hierarchy, code blocks with syntax highlighting, nested lists, and clean section breaks. Ready to paste!​​​​​​​​​​​​​​​​
-```
