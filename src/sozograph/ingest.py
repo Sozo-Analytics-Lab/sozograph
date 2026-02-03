@@ -9,7 +9,7 @@ from google import genai
 from google.genai import types
 
 from .interaction import Interaction
-from .schema import SourceRef
+from .schema import Passport, SourceRef
 from .utils import utcnow, sha256_json, parse_ts, safe_stringify
 from .adapters.firestore import firestore_to_interaction, firestore_batch_to_interactions
 from .adapters.rtdb import rtdb_to_interaction, rtdb_batch_to_interactions
@@ -378,7 +378,6 @@ def apply_fallback_summaries(
 
         # Summarize the raw object if present, else summarize the weak text
         payload = it.data if it.data is not None else {"text": it.text}
-        src_ref = src_by_pointer.get(it.source or "", None)
 
         improved = summarizer.summarize(
             payload,
@@ -391,3 +390,48 @@ def apply_fallback_summaries(
         out.append(it)
 
     return out
+
+
+# ---------------------------------------------------------------------------
+# ✅ v1 Public API: ingest()
+# ---------------------------------------------------------------------------
+
+def ingest(
+    passport: Passport,
+    item: Any,
+    *,
+    hint: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+    api_key: Optional[str] = None,
+    cfg: Optional[IngestConfig] = None,
+    fallback_model: str = "gemini-3-flash",
+) -> Tuple[Passport, List[Interaction]]:
+    """
+    v1 ingestion entry-point.
+
+    - Accepts: transcript string, list of transcripts, Firestore/RTDB/Supabase objects, or mixed list.
+    - Canonicalizes input -> Interactions + SourceRefs
+    - Optionally improves weak Interaction.text using Gemini fallback summarizer (NOT the extractor)
+    - Always upserts sources into passport, and touches updated_at.
+
+    Returns (passport, interactions) so the caller can pass interactions into the extractor step.
+    """
+    cfg = cfg or load_ingest_config()
+
+    interactions, sources = coerce_to_interactions(item, hint=hint, meta=meta)
+
+    # optional fallback text improvement
+    interactions = apply_fallback_summaries(
+        interactions,
+        sources=sources,
+        api_key=api_key,
+        cfg=cfg,
+        fallback_model=fallback_model,
+    )
+
+    # record sources on passport
+    for s in sources:
+        passport.upsert_source(s)
+
+    passport.touch()
+    return passport, interactions
