@@ -1,0 +1,6 @@
+I’m Quantilytix. I build software products and prefer direct, no-fluff answers.
+
+Right now I’m working on SozoGraph v1, a lightweight memory object for AI agents.
+I want alignment on strategy before rushing into code.
+
+In the future, I plan to extend this to graph-based memory, but v1 must stay simple.
