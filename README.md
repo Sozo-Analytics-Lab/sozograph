@@ -151,7 +151,19 @@ supabase_row = {
 
 passport, _ = sg.ingest(supabase_row, hint="supabase", meta={"user_key": "u1"})
 ```
+# SozoGraph Test Fixtures
 
+These fixtures are **intentionally small and human-readable**.
+
+They are designed to test:
+- transcript ingestion
+- Firestore document ingestion
+- Firebase Realtime Database snapshots
+- Supabase row ingestion
+
+They are NOT meant to simulate production-scale data.
+If a fixture grows beyond what a human would comfortably read,
+it is probably violating SozoGraph v1 philosophy.
 -----
 
 ## Export a compact agent “briefing” (context injection)
