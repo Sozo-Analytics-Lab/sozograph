@@ -1,241 +1,437 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional, Union
+import json
+import os
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple, Union
 
-from pydantic import BaseModel, Field, ConfigDict, field_validator
+from google import genai
+from google.genai import types
 
-
-JSONValue = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
-
-
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _iso(dt: datetime) -> str:
-    # Always serialize as ISO-8601 with timezone
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.isoformat()
-
-
-class Fact(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    key: str = Field(..., min_length=1)
-    value: JSONValue
-    ts: datetime = Field(default_factory=utcnow)
-    confidence: float = Field(0.7, ge=0.0, le=1.0)
-    source: str = Field(..., min_length=1)
-
-    @field_validator("key")
-    @classmethod
-    def _strip_key(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not v:
-            raise ValueError("key cannot be empty")
-        return v
-
-    def to_compact(self) -> Dict[str, Any]:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "ts": _iso(self.ts),
-            "confidence": float(self.confidence),
-            "source": self.source,
-        }
+from .interaction import Interaction
+from .schema import Passport, SourceRef
+from .utils import utcnow, sha256_json, parse_ts, safe_stringify
+from .adapters.firestore import firestore_to_interaction, firestore_batch_to_interactions
+from .adapters.rtdb import rtdb_to_interaction, rtdb_batch_to_interactions
+from .adapters.supabase import supabase_row_to_interaction, supabase_batch_to_interactions
+from .prompts import (
+    FALLBACK_SUMMARIZER_SYSTEM_PROMPT,
+    FALLBACK_SUMMARIZER_USER_PROMPT_TEMPLATE,
+)
 
 
-class Preference(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    key: str = Field(..., min_length=1)
-    value: JSONValue
-    ts: datetime = Field(default_factory=utcnow)
-    confidence: float = Field(0.7, ge=0.0, le=1.0)
-    source: str = Field(..., min_length=1)
-
-    @field_validator("key")
-    @classmethod
-    def _strip_key(cls, v: str) -> str:
-        v = (v or "").strip()
-        if not v:
-            raise ValueError("key cannot be empty")
-        return v
-
-    def to_compact(self) -> Dict[str, Any]:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "ts": _iso(self.ts),
-            "confidence": float(self.confidence),
-            "source": self.source,
-        }
+@dataclass
+class IngestConfig:
+    enable_fallback_summarizer: bool = True
+    max_interaction_chars: int = 4000
 
 
-EntityType = Literal[
-    "person",
-    "organization",
-    "project",
-    "product",
-    "place",
-    "tool",
-    "skill",
-    "concept",
-    "other",
-]
+def _env_bool(name: str, default: bool) -> bool:
+    v = os.getenv(name)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "y", "on")
 
 
-class Entity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(..., min_length=1)
-    type: EntityType = Field("other")
-    aliases: List[str] = Field(default_factory=list)
-
-    @field_validator("aliases")
-    @classmethod
-    def _clean_aliases(cls, v: List[str]) -> List[str]:
-        seen = set()
-        out: List[str] = []
-        for a in v or []:
-            a2 = (a or "").strip()
-            if not a2:
-                continue
-            k = a2.lower()
-            if k in seen:
-                continue
-            seen.add(k)
-            out.append(a2)
-        return out
-
-    def to_compact(self) -> Dict[str, Any]:
-        d = {"name": self.name, "type": self.type}
-        if self.aliases:
-            d["aliases"] = list(self.aliases)
-        return d
+def load_ingest_config() -> IngestConfig:
+    return IngestConfig(
+        enable_fallback_summarizer=_env_bool("SOZOGRAPH_ENABLE_FALLBACK_SUMMARIZER", True),
+        max_interaction_chars=int(os.getenv("SOZOGRAPH_MAX_INTERACTION_CHARS", "4000")),
+    )
 
 
-class OpenLoop(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    item: str = Field(..., min_length=1)
-    ts: datetime = Field(default_factory=utcnow)
-    source: str = Field(..., min_length=1)
-
-    def to_compact(self) -> Dict[str, Any]:
-        return {"item": self.item, "ts": _iso(self.ts), "source": self.source}
+def _looks_like_rtdb_envelope(obj: Dict[str, Any]) -> bool:
+    return "path" in obj and ("value" in obj or "data" in obj)
 
 
-class Contradiction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    key: str
-    old: JSONValue
-    new: JSONValue
-    ts_old: datetime
-    ts_new: datetime
-    source_old: str
-    source_new: str
-
-    def to_compact(self) -> Dict[str, Any]:
-        return {
-            "key": self.key,
-            "old": self.old,
-            "new": self.new,
-            "ts_old": _iso(self.ts_old),
-            "ts_new": _iso(self.ts_new),
-            "source_old": self.source_old,
-            "source_new": self.source_new,
-        }
+def _looks_like_supabase_envelope(obj: Dict[str, Any]) -> bool:
+    return "table" in obj and ("row" in obj or "data" in obj)
 
 
-SourceKind = Literal[
-    "transcript",
-    "firestore",
-    "rtdb",
-    "supabase",
-    "chat",
-    "form",
-    "unknown",
-]
-
-
-class SourceRef(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    id: str
-    kind: SourceKind = Field("unknown")
-    ts: datetime = Field(default_factory=utcnow)
-    hash: Optional[str] = None
-    source: Optional[str] = None
-
-    def to_compact(self) -> Dict[str, Any]:
-        d = {"id": self.id, "kind": self.kind, "ts": _iso(self.ts)}
-        if self.hash:
-            d["hash"] = self.hash
-        if self.source:
-            d["source"] = self.source
-        return d
-
-
-class Passport(BaseModel):
+def _guess_hint(obj: Dict[str, Any]) -> str:
     """
-    Portable cognitive snapshot (SozoGraph v1).
+    Best-effort hint detection when user doesn't specify.
+    """
+    if _looks_like_rtdb_envelope(obj):
+        return "rtdb"
+    if _looks_like_supabase_envelope(obj):
+        return "supabase"
+    # Firestore docs are just dicts; we treat default dicts as firestore-ish.
+    return "firestore"
+
+
+def _is_text_too_weak(text: str) -> bool:
+    """
+    Decide whether deterministic text is too weak and needs Gemini fallback.
+    We keep this simple and conservative in v1.
+    """
+    if not text:
+        return True
+    t = text.strip()
+    if len(t) < 30:
+        return True
+    # If it looks like "key: val; key: val" only, we may still accept it;
+    # but if it's mostly punctuation/noise, fallback.
+    alnum = sum(ch.isalnum() for ch in t)
+    if alnum / max(len(t), 1) < 0.35:
+        return True
+    return False
+
+
+class FallbackSummarizer:
+    """
+    Gemini fallback summarizer used ONLY when we cannot derive meaningful text
+    deterministically from an object.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    def __init__(self, api_key: str, model: str = "gemini-3-flash"):
+        self.client = genai.Client(api_key=api_key)
+        self.model = model
 
-    version: str = Field("1.0")
-    updated_at: datetime = Field(default_factory=utcnow)
-    user_key: Optional[str] = None
+    def summarize(
+        self,
+        obj: Any,
+        *,
+        source_hint: str,
+        source_pointer: Optional[str],
+        ts_iso: str,
+    ) -> str:
+        object_json = ""
+        try:
+            object_json = json.dumps(obj, indent=2, ensure_ascii=False, default=str)
+        except Exception:
+            object_json = safe_stringify(obj)
 
-    facts: List[Fact] = Field(default_factory=list)
-    prefs: List[Preference] = Field(default_factory=list)
-    entities: List[Entity] = Field(default_factory=list)
-    open_loops: List[OpenLoop] = Field(default_factory=list)
-    contradictions: List[Contradiction] = Field(default_factory=list)
-    sources: List[SourceRef] = Field(default_factory=list)
-
-    meta: Dict[str, Any] = Field(default_factory=dict)
-
-    @classmethod
-    def new(cls) -> "Passport":
-        """
-        Create an empty passport with deterministic defaults.
-        Recommended constructor for notebooks / Colab.
-        """
-        return cls(
-            facts=[],
-            prefs=[],
-            entities=[],
-            open_loops=[],
-            contradictions=[],
-            sources=[],
-            meta={},
+        prompt = FALLBACK_SUMMARIZER_USER_PROMPT_TEMPLATE.format(
+            source_hint=source_hint,
+            source_pointer=source_pointer or "",
+            ts_iso=ts_iso,
+            object_json=object_json,
         )
 
-    def to_compact_dict(self) -> Dict[str, Any]:
-        return {
-            "version": self.version,
-            "updated_at": _iso(self.updated_at),
-            **({"user_key": self.user_key} if self.user_key else {}),
-            "facts": [f.to_compact() for f in self.facts],
-            "prefs": [p.to_compact() for p in self.prefs],
-            "entities": [e.to_compact() for e in self.entities],
-            "open_loops": [o.to_compact() for o in self.open_loops],
-            "contradictions": [c.to_compact() for c in self.contradictions],
-            "sources": [s.to_compact() for s in self.sources],
-            **({"meta": self.meta} if self.meta else {}),
-        }
+        resp = self.client.models.generate_content(
+            model=self.model,
+            contents=[
+                types.Content(role="system", parts=[types.Part(text=FALLBACK_SUMMARIZER_SYSTEM_PROMPT)]),
+                types.Content(role="user", parts=[types.Part(text=prompt)]),
+            ],
+            generation_config=types.GenerationConfig(
+                temperature=0.2,
+            ),
+        )
 
-    def upsert_source(self, src: SourceRef) -> None:
-        for i, existing in enumerate(self.sources):
-            if existing.id == src.id:
-                self.sources[i] = src
-                return
-        self.sources.append(src)
+        txt = (resp.text or "").strip()
+        # Final guard: never return empty
+        return txt if txt else "Database object (unstructured)."
 
-    def touch(self) -> None:
-        self.updated_at = utcnow()
+
+def make_source_ref(
+    *,
+    source_id: str,
+    kind: str,
+    payload: Any,
+    ts: Optional[Any] = None,
+    source_pointer: Optional[str] = None,
+) -> SourceRef:
+    dt = parse_ts(ts) or utcnow()
+    return SourceRef(
+        id=source_id,
+        kind=kind,  # validated later by pydantic in Passport
+        ts=dt,
+        hash=sha256_json(payload),
+        source=source_pointer,
+    )
+
+
+def coerce_to_interactions(
+    item: Any,
+    *,
+    hint: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+) -> Tuple[List[Interaction], List[SourceRef]]:
+    """
+    Convert arbitrary input into a list of Interactions + SourceRefs.
+
+    This does NOT call the extractor. It only canonicalizes inputs.
+    Gemini fallback summarization is applied later by apply_fallback_summaries().
+    """
+    meta = meta or {}
+    interactions: List[Interaction] = []
+    sources: List[SourceRef] = []
+
+    # 1) String transcript
+    if isinstance(item, str):
+        src_id = meta.get("source_id") or f"t{abs(hash(item)) % 10_000_000}"
+        src_ptr = meta.get("source") or meta.get("source_pointer")
+        ts = parse_ts(meta.get("ts")) or utcnow()
+
+        interactions.append(
+            Interaction(
+                id=meta.get("id"),
+                ts=ts,
+                type=meta.get("type", "transcript"),
+                text=item,
+                source=src_ptr,
+                data=None,
+                meta=meta,
+            )
+        )
+        sources.append(
+            make_source_ref(
+                source_id=src_id,
+                kind=meta.get("kind", "transcript"),
+                payload={"text": item, "meta": meta},
+                ts=ts,
+                source_pointer=src_ptr,
+            )
+        )
+        return interactions, sources
+
+    # 2) List of mixed items
+    if isinstance(item, list):
+        for idx, sub in enumerate(item):
+            sub_meta = dict(meta)
+            # allow per-item override without forcing shape
+            sub_meta.setdefault("source_id", f"{meta.get('source_id','h')}_{idx}")
+            sub_interactions, sub_sources = coerce_to_interactions(sub, hint=hint, meta=sub_meta)
+            interactions.extend(sub_interactions)
+            sources.extend(sub_sources)
+        return interactions, sources
+
+    # 3) Dict objects (DB docs / envelopes)
+    if isinstance(item, dict):
+        used_hint = (hint or item.get("_hint") or _guess_hint(item)).lower().strip()
+
+        # RTDB envelope: {path, value}
+        if used_hint == "rtdb" or _looks_like_rtdb_envelope(item):
+            path = item.get("path") or meta.get("source") or meta.get("source_pointer")
+            value = item.get("value", item.get("data"))
+            it = rtdb_to_interaction(value, path=path)
+
+            src_id = meta.get("source_id") or f"r{abs(hash(sha256_json(item))) % 10_000_000}"
+            sources.append(
+                make_source_ref(
+                    source_id=src_id,
+                    kind="rtdb",
+                    payload=item,
+                    ts=it.ts,
+                    source_pointer=it.source,
+                )
+            )
+            interactions.append(it)
+            return interactions, sources
+
+        # Supabase envelope: {table, row}
+        if used_hint == "supabase" or _looks_like_supabase_envelope(item):
+            table = item.get("table") or meta.get("table")
+            row = item.get("row", item.get("data", item))
+            it = supabase_row_to_interaction(row if isinstance(row, dict) else {"value": row}, table=table)
+
+            src_id = meta.get("source_id") or f"s{abs(hash(sha256_json(item))) % 10_000_000}"
+            sources.append(
+                make_source_ref(
+                    source_id=src_id,
+                    kind="supabase",
+                    payload=item,
+                    ts=it.ts,
+                    source_pointer=it.source,
+                )
+            )
+            interactions.append(it)
+            return interactions, sources
+
+        # Firestore: doc dict OR batch dict/list
+        if used_hint == "firestore":
+            # batch dict mapping {doc_id: doc}
+            if all(isinstance(v, dict) for v in item.values()) and any(k for k in item.keys()):
+                # ambiguous: could be a single doc with many nested dicts; we treat as batch
+                col_path = meta.get("source") or meta.get("collection_path")
+                its = firestore_batch_to_interactions(item, collection_path=col_path)
+                # One source per interaction for traceability
+                for it in its:
+                    src_id = meta.get("source_id") or f"f{abs(hash(sha256_json(it.data))) % 10_000_000}"
+                    sources.append(
+                        make_source_ref(
+                            source_id=src_id,
+                            kind="firestore",
+                            payload=it.data,
+                            ts=it.ts,
+                            source_pointer=it.source,
+                        )
+                    )
+                    interactions.append(it)
+                return interactions, sources
+
+            # single doc
+            doc_id = item.get("id") or meta.get("id")
+            src_ptr = meta.get("source") or meta.get("source_pointer") or None
+            it = firestore_to_interaction(item, source=src_ptr, doc_id=doc_id)
+
+            src_id = meta.get("source_id") or f"f{abs(hash(sha256_json(item))) % 10_000_000}"
+            sources.append(
+                make_source_ref(
+                    source_id=src_id,
+                    kind="firestore",
+                    payload=item,
+                    ts=it.ts,
+                    source_pointer=it.source,
+                )
+            )
+            interactions.append(it)
+            return interactions, sources
+
+        # Unknown dict: treat as generic event
+        text = safe_stringify(item)
+        ts = parse_ts(item.get("ts") if isinstance(item, dict) else None) or utcnow()
+        src_id = meta.get("source_id") or f"u{abs(hash(sha256_json(item))) % 10_000_000}"
+        src_ptr = meta.get("source") or meta.get("source_pointer")
+
+        interactions.append(
+            Interaction(
+                id=meta.get("id") or item.get("id") or sha256_json(item)[:16],
+                ts=ts,
+                type=meta.get("type", "unknown"),
+                text=text,
+                source=src_ptr,
+                data=item,
+                meta=meta,
+            )
+        )
+        sources.append(
+            make_source_ref(
+                source_id=src_id,
+                kind=meta.get("kind", "unknown"),
+                payload=item,
+                ts=ts,
+                source_pointer=src_ptr,
+            )
+        )
+        return interactions, sources
+
+    # 4) Fallback for other types
+    text = safe_stringify(item)
+    ts = parse_ts(meta.get("ts")) or utcnow()
+    src_id = meta.get("source_id") or f"x{abs(hash(str(item))) % 10_000_000}"
+    src_ptr = meta.get("source") or meta.get("source_pointer")
+    interactions.append(
+        Interaction(
+            id=meta.get("id") or sha256_json({"v": str(item)})[:16],
+            ts=ts,
+            type=meta.get("type", "unknown"),
+            text=text,
+            source=src_ptr,
+            data={"value": str(item)},
+            meta=meta,
+        )
+    )
+    sources.append(
+        make_source_ref(
+            source_id=src_id,
+            kind=meta.get("kind", "unknown"),
+            payload={"value": str(item), "meta": meta},
+            ts=ts,
+            source_pointer=src_ptr,
+        )
+    )
+    return interactions, sources
+
+
+def apply_fallback_summaries(
+    interactions: List[Interaction],
+    *,
+    sources: List[SourceRef],
+    api_key: Optional[str],
+    cfg: IngestConfig,
+    fallback_model: str = "gemini-3-flash",
+) -> List[Interaction]:
+    """
+    For any interaction whose text is too weak/noisy, optionally call Gemini fallback
+    summarizer to get a better Interaction.text. This minimizes user pain.
+
+    We DO NOT change Interaction.data; only improve Interaction.text.
+    """
+    if not cfg.enable_fallback_summarizer:
+        return interactions
+    if not api_key:
+        return interactions
+
+    summarizer = FallbackSummarizer(api_key=api_key, model=fallback_model)
+
+    # Map source id by interaction id/source pointer best-effort
+    # (In v1 we keep this simple: use first matching source if possible)
+    src_by_pointer: Dict[str, SourceRef] = {}
+    for s in sources:
+        if s.source:
+            src_by_pointer[s.source] = s
+
+    out: List[Interaction] = []
+    for it in interactions:
+        txt = it.text or ""
+        # truncate before evaluating (avoid massive stringify)
+        if len(txt) > cfg.max_interaction_chars:
+            txt = txt[: cfg.max_interaction_chars - 1] + "…"
+            it.text = txt
+
+        if not _is_text_too_weak(it.text):
+            out.append(it)
+            continue
+
+        # Summarize the raw object if present, else summarize the weak text
+        payload = it.data if it.data is not None else {"text": it.text}
+
+        improved = summarizer.summarize(
+            payload,
+            source_hint=it.type,
+            source_pointer=it.source,
+            ts_iso=it.ts.isoformat(),
+        )
+
+        it.text = improved[: cfg.max_interaction_chars] if improved else it.text
+        out.append(it)
+
+    return out
+
+
+# ---------------------------------------------------------------------------
+# ✅ v1 Public API: ingest()
+# ---------------------------------------------------------------------------
+
+def ingest(
+    passport: Passport,
+    item: Any,
+    *,
+    hint: Optional[str] = None,
+    meta: Optional[Dict[str, Any]] = None,
+    api_key: Optional[str] = None,
+    cfg: Optional[IngestConfig] = None,
+    fallback_model: str = "gemini-3-flash",
+) -> Tuple[Passport, List[Interaction]]:
+    """
+    v1 ingestion entry-point.
+
+    - Accepts: transcript string, list of transcripts, Firestore/RTDB/Supabase objects, or mixed list.
+    - Canonicalizes input -> Interactions + SourceRefs
+    - Optionally improves weak Interaction.text using Gemini fallback summarizer (NOT the extractor)
+    - Always upserts sources into passport, and touches updated_at.
+
+    Returns (passport, interactions) so the caller can pass interactions into the extractor step.
+    """
+    cfg = cfg or load_ingest_config()
+
+    interactions, sources = coerce_to_interactions(item, hint=hint, meta=meta)
+
+    # optional fallback text improvement
+    interactions = apply_fallback_summaries(
+        interactions,
+        sources=sources,
+        api_key=api_key,
+        cfg=cfg,
+        fallback_model=fallback_model,
+    )
+
+    # record sources on passport
+    for s in sources:
+        passport.upsert_source(s)
+
+    passport.touch()
+    return passport, interactions
