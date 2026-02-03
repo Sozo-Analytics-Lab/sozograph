@@ -84,7 +84,7 @@ class FallbackSummarizer:
     deterministically from an object.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-3-flash"):
+    def __init__(self, api_key: str, model: str = "gemini-3-flash-preview"):
         self.client = genai.Client(api_key=api_key)
         self.model = model
 
