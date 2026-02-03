@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 JSONValue = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
 
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -193,6 +195,24 @@ class Passport(BaseModel):
     sources: List[SourceRef] = Field(default_factory=list)
 
     meta: Dict[str, Any] = Field(default_factory=dict, description="Optional metadata (non-memory)")
+
+    # inside class Passport(BaseModel):
+    @classmethod
+    def new(cls) -> "Passport":
+    """
+    Create an empty passport with deterministic defaults.
+    This is the recommended constructor for notebooks / quickstarts.
+    """
+        now = datetime.now(timezone.utc)
+        return cls(
+           facts=[],
+           prefs=[],
+           entities=[],
+           open_loops=[],
+           contradictions=[],
+           created_at=now,
+           updated_at=now,
+        )
 
     def to_compact_dict(self) -> Dict[str, Any]:
         """
