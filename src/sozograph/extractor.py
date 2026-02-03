@@ -45,7 +45,7 @@ class Extractor:
                 types.Content(role="system", parts=[types.Part(text=EXTRACTOR_SYSTEM_PROMPT)]),
                 types.Content(role="user", parts=[types.Part(text=prompt)]),
             ],
-            generation_config=types.GenerationConfig(
+            config=types.GenerationConfig(
                 temperature=0.2,
                 response_mime_type="application/json",
             ),
