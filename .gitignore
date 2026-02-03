@@ -1,0 +1,54 @@
+# -----------------------------
+# Python
+# -----------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Packaging
+pip-wheel-metadata/
+
+# -----------------------------
+# Environment / secrets
+# -----------------------------
+.env
+.env.*
+!.env.example
+
+# -----------------------------
+# Editors / IDEs
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# -----------------------------
+# Testing / coverage
+# -----------------------------
+.pytest_cache/
+.coverage
+htmlcov/
+
+# -----------------------------
+# Logs
+# -----------------------------
+*.log
+
+# -----------------------------
+# OS
+# -----------------------------
+Thumbs.db
