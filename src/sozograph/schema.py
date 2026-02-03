@@ -9,8 +9,6 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 JSONValue = Union[str, int, float, bool, None, Dict[str, Any], List[Any]]
 
 
-
-
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -25,11 +23,11 @@ def _iso(dt: datetime) -> str:
 class Fact(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(..., min_length=1, description="Normalized fact key, e.g. 'role', 'location_city'")
-    value: JSONValue = Field(..., description="Current value (JSON-safe). Prefer scalars in v1.")
-    ts: datetime = Field(default_factory=utcnow, description="Timestamp when this fact became true")
-    confidence: float = Field(0.7, ge=0.0, le=1.0, description="0..1 confidence of extraction")
-    source: str = Field(..., min_length=1, description="Source reference id, e.g. 't1'")
+    key: str = Field(..., min_length=1)
+    value: JSONValue
+    ts: datetime = Field(default_factory=utcnow)
+    confidence: float = Field(0.7, ge=0.0, le=1.0)
+    source: str = Field(..., min_length=1)
 
     @field_validator("key")
     @classmethod
@@ -52,8 +50,8 @@ class Fact(BaseModel):
 class Preference(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(..., min_length=1, description="Normalized preference key, e.g. 'tone', 'language'")
-    value: JSONValue = Field(..., description="Preferred value (JSON-safe). Prefer scalars in v1.")
+    key: str = Field(..., min_length=1)
+    value: JSONValue
     ts: datetime = Field(default_factory=utcnow)
     confidence: float = Field(0.7, ge=0.0, le=1.0)
     source: str = Field(..., min_length=1)
@@ -99,17 +97,16 @@ class Entity(BaseModel):
     @field_validator("aliases")
     @classmethod
     def _clean_aliases(cls, v: List[str]) -> List[str]:
-        # de-dupe while preserving order
         seen = set()
         out: List[str] = []
         for a in v or []:
             a2 = (a or "").strip()
             if not a2:
                 continue
-            key = a2.lower()
-            if key in seen:
+            k = a2.lower()
+            if k in seen:
                 continue
-            seen.add(key)
+            seen.add(k)
             out.append(a2)
         return out
 
@@ -123,7 +120,7 @@ class Entity(BaseModel):
 class OpenLoop(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    item: str = Field(..., min_length=1, description="Unresolved question / TODO / missing detail")
+    item: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
     source: str = Field(..., min_length=1)
 
@@ -134,13 +131,13 @@ class OpenLoop(BaseModel):
 class Contradiction(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(..., min_length=1, description="Fact/preference key that changed")
-    old: JSONValue = Field(..., description="Previous value")
-    new: JSONValue = Field(..., description="New value")
-    ts_old: datetime = Field(..., description="Timestamp of old value")
-    ts_new: datetime = Field(..., description="Timestamp of new value")
-    source_old: str = Field(..., min_length=1)
-    source_new: str = Field(..., min_length=1)
+    key: str
+    old: JSONValue
+    new: JSONValue
+    ts_old: datetime
+    ts_new: datetime
+    source_old: str
+    source_new: str
 
     def to_compact(self) -> Dict[str, Any]:
         return {
@@ -154,20 +151,28 @@ class Contradiction(BaseModel):
         }
 
 
-SourceKind = Literal["transcript", "firestore", "rtdb", "supabase", "chat", "form", "unknown"]
+SourceKind = Literal[
+    "transcript",
+    "firestore",
+    "rtdb",
+    "supabase",
+    "chat",
+    "form",
+    "unknown",
+]
 
 
 class SourceRef(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    id: str = Field(..., min_length=1, description="Short id used in Fact.source, e.g. 't1'")
+    id: str
     kind: SourceKind = Field("unknown")
     ts: datetime = Field(default_factory=utcnow)
-    hash: Optional[str] = Field(None, description="sha256 hash of canonicalized input payload")
-    source: Optional[str] = Field(None, description="Human-readable source pointer, e.g. 'firestore:/apps/abc'")
+    hash: Optional[str] = None
+    source: Optional[str] = None
 
     def to_compact(self) -> Dict[str, Any]:
-        d: Dict[str, Any] = {"id": self.id, "kind": self.kind, "ts": _iso(self.ts)}
+        d = {"id": self.id, "kind": self.kind, "ts": _iso(self.ts)}
         if self.hash:
             d["hash"] = self.hash
         if self.source:
@@ -178,14 +183,13 @@ class SourceRef(BaseModel):
 class Passport(BaseModel):
     """
     Portable cognitive snapshot (SozoGraph v1).
-    This object is the stable contract between ingestion + any agent context injection.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    version: str = Field("1.0", description="SozoGraph passport schema version")
+    version: str = Field("1.0")
     updated_at: datetime = Field(default_factory=utcnow)
-    user_key: Optional[str] = Field(None, description="Optional stable user identifier")
+    user_key: Optional[str] = None
 
     facts: List[Fact] = Field(default_factory=list)
     prefs: List[Preference] = Field(default_factory=list)
@@ -194,30 +198,25 @@ class Passport(BaseModel):
     contradictions: List[Contradiction] = Field(default_factory=list)
     sources: List[SourceRef] = Field(default_factory=list)
 
-    meta: Dict[str, Any] = Field(default_factory=dict, description="Optional metadata (non-memory)")
+    meta: Dict[str, Any] = Field(default_factory=dict)
 
-    # inside class Passport(BaseModel):
     @classmethod
     def new(cls) -> "Passport":
-    """
-    Create an empty passport with deterministic defaults.
-    This is the recommended constructor for notebooks / quickstarts.
-    """
-        now = datetime.now(timezone.utc)
+        """
+        Create an empty passport with deterministic defaults.
+        Recommended constructor for notebooks / Colab.
+        """
         return cls(
-           facts=[],
-           prefs=[],
-           entities=[],
-           open_loops=[],
-           contradictions=[],
-           created_at=now,
-           updated_at=now,
+            facts=[],
+            prefs=[],
+            entities=[],
+            open_loops=[],
+            contradictions=[],
+            sources=[],
+            meta={},
         )
 
     def to_compact_dict(self) -> Dict[str, Any]:
-        """
-        JSON-serializable dict with ISO timestamps (safe for storage / transport).
-        """
         return {
             "version": self.version,
             "updated_at": _iso(self.updated_at),
@@ -232,9 +231,6 @@ class Passport(BaseModel):
         }
 
     def upsert_source(self, src: SourceRef) -> None:
-        """
-        Add/replace a source by id (helps keep sources list unique).
-        """
         for i, existing in enumerate(self.sources):
             if existing.id == src.id:
                 self.sources[i] = src
