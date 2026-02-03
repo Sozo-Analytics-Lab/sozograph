@@ -13,6 +13,9 @@ from .schema import (
 )
 from .utils import normalize_key
 
+def _norm_key(key: str) -> str:
+    return key.strip().lower()
+
 
 @dataclass
 class ResolveStats:
