@@ -314,11 +314,7 @@ SozoGraph enables agents to maintain **consistent beliefs** across sessions, sys
 
 MIT — [Sozo Analytics Lab](https://github.com/Sozo-Analytics-Lab)
 
------
-
-## 🏆 Built For
-
-This project was built for the **Gemini 3 Global Hackathon** to demonstrate how structured memory normalization unlocks the next generation of agentic AI applications.
+----
 
 **Try it now:**
 
