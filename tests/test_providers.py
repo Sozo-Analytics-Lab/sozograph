@@ -185,31 +185,31 @@ def test_gemini_schema_strips_unsupported_keywords(fake_gemini, captured):
     assert "properties" in captured["config"].response_schema
 
 
-def _rate_limit_error(code: int = 429, retry_delay: str = "0.01s") -> Exception:
-    exc = Exception(f"{code} RESOURCE_EXHAUSTED")
+def _retryable_error(code: int, retry_delay: str | None = "0.01s") -> Exception:
+    # 429 (quota) carries a structured RetryInfo with a suggested delay; 503
+    # (transient overload) typically does not, per Gemini's actual error shape.
+    exc = Exception(f"{code} error")
     exc.code = code
-    exc.details = {
-        "error": {
-            "details": [
-                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}
-            ]
-        }
-    }
+    exc.details = {"error": {"details": []}}
+    if retry_delay is not None:
+        exc.details["error"]["details"] = [
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}
+        ]
     return exc
 
 
 @pytest.fixture
 def fake_gemini_flaky(monkeypatch, captured):
-    """Like fake_gemini, but generate_content fails with 429 a fixed number of times first."""
+    """Like fake_gemini, but generate_content fails a fixed number of times first."""
 
-    def _install(*, failures: int):
+    def _install(*, failures: int, code: int = 429, retry_delay: str | None = "0.01s"):
         state = {"calls": 0}
 
         class Models:
             def generate_content(self, **kw):
                 state["calls"] += 1
                 if state["calls"] <= failures:
-                    raise _rate_limit_error()
+                    raise _retryable_error(code, retry_delay)
                 captured.update(kw)
                 return types.SimpleNamespace(
                     text=json.dumps(PAYLOAD),
@@ -261,6 +261,18 @@ def test_gemini_gives_up_after_max_rate_limit_retries(fake_gemini_flaky):
     # 1 initial attempt + 8 retries, per _MAX_RATE_LIMIT_RETRIES.
     assert state["calls"] == 9
     assert len(sleeps) == 8
+
+
+def test_gemini_retries_on_server_overload_then_succeeds(fake_gemini_flaky):
+    # 503 UNAVAILABLE ("high demand") has no RetryInfo in the body, unlike 429;
+    # this must fall back to exponential backoff rather than crash on a missing
+    # retryDelay or retry with no delay at all.
+    state, sleeps = fake_gemini_flaky(failures=2, code=503, retry_delay=None)
+    p = get_provider("gemini:gemini-2.5-flash", api_key="k")
+
+    assert p.complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
+    assert state["calls"] == 3
+    assert sleeps == [10.0, 20.0]
 
 
 # --------------------------------------------------------------------------

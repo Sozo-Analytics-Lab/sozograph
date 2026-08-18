@@ -9,17 +9,23 @@ from .base import LLMProvider, loads_lenient, require
 # Gemini's response_schema is an OpenAPI 3.0 subset and rejects these.
 _UNSUPPORTED = ("additionalProperties", "$schema", "strict", "definitions", "$defs")
 
-# Free-tier quota (RESOURCE_EXHAUSTED, HTTP 429) is routine, not exceptional:
-# Google's own free tier caps requests per minute per model, so a multi-call
-# benchmark run hits it by design, not by mistake. Wait out the server's own
-# suggested delay and retry, rather than let the run die on the first 429.
-_RATE_LIMIT_CODE = 429
+# Two error codes are routine under real load, not exceptional: 429
+# (RESOURCE_EXHAUSTED) is Google's free-tier per-minute cap, hit by design on
+# any multi-call benchmark run; 503 (UNAVAILABLE) is transient overload on
+# Google's side, unrelated to anything the caller did. Both are worth waiting
+# out and retrying rather than letting the run die on the first one.
+_RETRYABLE_CODES = (429, 503)
 _MAX_RATE_LIMIT_RETRIES = 8
 _DEFAULT_RETRY_DELAY_SECONDS = 5.0
+_BACKOFF_BASE_SECONDS = 10.0
+_BACKOFF_MAX_SECONDS = 60.0
 
 
-def _retry_delay_seconds(exc: Exception) -> float:
-    """Read the server-suggested retry delay out of a 429's error body."""
+def _retry_delay_seconds(exc: Exception, attempt: int) -> float:
+    """
+    Prefer the server-suggested delay (429 carries a RetryInfo with one); fall
+    back to exponential backoff for errors that don't (503 usually doesn't).
+    """
     details = getattr(exc, "details", None)
     items = []
     if isinstance(details, dict):
@@ -30,7 +36,9 @@ def _retry_delay_seconds(exc: Exception) -> float:
                 return float(str(item["retryDelay"]).rstrip("s"))
             except ValueError:
                 continue
-    return _DEFAULT_RETRY_DELAY_SECONDS
+    if getattr(exc, "code", None) == 429:
+        return _DEFAULT_RETRY_DELAY_SECONDS
+    return min(_BACKOFF_BASE_SECONDS * (2**attempt), _BACKOFF_MAX_SECONDS)
 
 
 def _to_gemini_schema(node: Any) -> Any:
@@ -79,11 +87,11 @@ class GeminiProvider(LLMProvider):
                     model=self.model, contents=contents, config=config
                 )
             except Exception as exc:
-                if getattr(exc, "code", None) != _RATE_LIMIT_CODE or (
+                if getattr(exc, "code", None) not in _RETRYABLE_CODES or (
                     attempt >= _MAX_RATE_LIMIT_RETRIES
                 ):
                     raise
-                time.sleep(_retry_delay_seconds(exc))
+                time.sleep(_retry_delay_seconds(exc, attempt))
                 attempt += 1
 
     def complete_json(self, *, system, user, schema, temperature=0.2) -> dict[str, Any]:
