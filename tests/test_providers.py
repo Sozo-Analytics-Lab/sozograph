@@ -185,6 +185,84 @@ def test_gemini_schema_strips_unsupported_keywords(fake_gemini, captured):
     assert "properties" in captured["config"].response_schema
 
 
+def _rate_limit_error(code: int = 429, retry_delay: str = "0.01s") -> Exception:
+    exc = Exception(f"{code} RESOURCE_EXHAUSTED")
+    exc.code = code
+    exc.details = {
+        "error": {
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": retry_delay}
+            ]
+        }
+    }
+    return exc
+
+
+@pytest.fixture
+def fake_gemini_flaky(monkeypatch, captured):
+    """Like fake_gemini, but generate_content fails with 429 a fixed number of times first."""
+
+    def _install(*, failures: int):
+        state = {"calls": 0}
+
+        class Models:
+            def generate_content(self, **kw):
+                state["calls"] += 1
+                if state["calls"] <= failures:
+                    raise _rate_limit_error()
+                captured.update(kw)
+                return types.SimpleNamespace(
+                    text=json.dumps(PAYLOAD),
+                    usage_metadata=types.SimpleNamespace(
+                        prompt_token_count=1, candidates_token_count=1
+                    ),
+                )
+
+        class Client:
+            def __init__(self, **kw):
+                self.models = Models()
+
+        def GenerateContentConfig(**kw):
+            return types.SimpleNamespace(**kw)
+
+        google = _module("google")
+        genai = _module("google.genai", Client=Client)
+        gtypes = _module("google.genai.types", GenerateContentConfig=GenerateContentConfig)
+        google.genai = genai
+        genai.types = gtypes
+        monkeypatch.setitem(sys.modules, "google", google)
+        monkeypatch.setitem(sys.modules, "google.genai", genai)
+        monkeypatch.setitem(sys.modules, "google.genai.types", gtypes)
+
+        sleeps: list[float] = []
+        monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+        return state, sleeps
+
+    return _install
+
+
+def test_gemini_retries_on_rate_limit_then_succeeds(fake_gemini_flaky):
+    # Free-tier RPM caps make a 429 routine, not exceptional; the harness must
+    # wait out the server's suggested delay and retry rather than die on it.
+    state, sleeps = fake_gemini_flaky(failures=2)
+    p = get_provider("gemini:gemini-2.5-flash", api_key="k")
+
+    assert p.complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
+    assert state["calls"] == 3
+    assert sleeps == [0.01, 0.01]
+
+
+def test_gemini_gives_up_after_max_rate_limit_retries(fake_gemini_flaky):
+    state, sleeps = fake_gemini_flaky(failures=999)
+    p = get_provider("gemini:gemini-2.5-flash", api_key="k")
+
+    with pytest.raises(Exception):
+        p.complete_json(system="s", user="u", schema=SCHEMA)
+    # 1 initial attempt + 8 retries, per _MAX_RATE_LIMIT_RETRIES.
+    assert state["calls"] == 9
+    assert len(sleeps) == 8
+
+
 # --------------------------------------------------------------------------
 # Ollama: format=<schema> grammar-constrained decoding
 # --------------------------------------------------------------------------

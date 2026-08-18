@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
@@ -7,6 +8,29 @@ from .base import LLMProvider, loads_lenient, require
 
 # Gemini's response_schema is an OpenAPI 3.0 subset and rejects these.
 _UNSUPPORTED = ("additionalProperties", "$schema", "strict", "definitions", "$defs")
+
+# Free-tier quota (RESOURCE_EXHAUSTED, HTTP 429) is routine, not exceptional:
+# Google's own free tier caps requests per minute per model, so a multi-call
+# benchmark run hits it by design, not by mistake. Wait out the server's own
+# suggested delay and retry, rather than let the run die on the first 429.
+_RATE_LIMIT_CODE = 429
+_MAX_RATE_LIMIT_RETRIES = 8
+_DEFAULT_RETRY_DELAY_SECONDS = 5.0
+
+
+def _retry_delay_seconds(exc: Exception) -> float:
+    """Read the server-suggested retry delay out of a 429's error body."""
+    details = getattr(exc, "details", None)
+    items = []
+    if isinstance(details, dict):
+        items = (details.get("error") or {}).get("details") or []
+    for item in items:
+        if isinstance(item, dict) and "retryDelay" in item:
+            try:
+                return float(str(item["retryDelay"]).rstrip("s"))
+            except ValueError:
+                continue
+    return _DEFAULT_RETRY_DELAY_SECONDS
 
 
 def _to_gemini_schema(node: Any) -> Any:
@@ -47,10 +71,24 @@ class GeminiProvider(LLMProvider):
             getattr(u, "candidates_token_count", 0) or 0,
         )
 
+    def _generate(self, *, contents, config):
+        attempt = 0
+        while True:
+            try:
+                return self._client().models.generate_content(
+                    model=self.model, contents=contents, config=config
+                )
+            except Exception as exc:
+                if getattr(exc, "code", None) != _RATE_LIMIT_CODE or (
+                    attempt >= _MAX_RATE_LIMIT_RETRIES
+                ):
+                    raise
+                time.sleep(_retry_delay_seconds(exc))
+                attempt += 1
+
     def complete_json(self, *, system, user, schema, temperature=0.2) -> dict[str, Any]:
         types = self._types()
-        resp = self._client().models.generate_content(
-            model=self.model,
+        resp = self._generate(
             contents=user,
             config=types.GenerateContentConfig(
                 system_instruction=system,
@@ -64,8 +102,7 @@ class GeminiProvider(LLMProvider):
 
     def complete_text(self, *, system, user, temperature=0.2) -> str:
         types = self._types()
-        resp = self._client().models.generate_content(
-            model=self.model,
+        resp = self._generate(
             contents=user,
             config=types.GenerateContentConfig(
                 system_instruction=system,
