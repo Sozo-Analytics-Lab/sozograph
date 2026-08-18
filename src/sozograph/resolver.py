@@ -1,22 +1,26 @@
+"""
+The truth layer: deterministic, local, and never calls a model.
+
+Everything here runs in memory before any network request. Given the same
+inputs it produces the same passport, which is what makes the state portable
+and the behaviour auditable.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Any
 
+from .dedupe import DedupeReport, Verdict, find_match
 from .schema import (
-    Passport,
-    Fact,
-    Preference,
-    Entity,
-    OpenLoop,
     Contradiction,
+    Entity,
+    Episode,
+    Fact,
+    OpenLoop,
+    Passport,
+    Preference,
 )
 from .utils import normalize_key
-
-
-def _norm_key(key: str) -> str:
-    # Canonical key identity for truth-layer merges
-    return (key or "").strip().lower()
 
 
 @dataclass
@@ -25,98 +29,145 @@ class ResolveStats:
     prefs_upserted: int = 0
     entities_merged: int = 0
     open_loops_added: int = 0
+    episodes_added: int = 0
     contradictions_added: int = 0
+    keys_deduped: int = 0
+    dedupe: DedupeReport = field(default_factory=DedupeReport)
+
+    def to_dict(self) -> dict[str, int]:
+        return {
+            "facts_upserted": self.facts_upserted,
+            "prefs_upserted": self.prefs_upserted,
+            "entities_merged": self.entities_merged,
+            "open_loops_added": self.open_loops_added,
+            "episodes_added": self.episodes_added,
+            "contradictions_added": self.contradictions_added,
+            "keys_deduped": self.keys_deduped,
+        }
 
 
 def _value_equal(a: Any, b: Any) -> bool:
-    # JSON-ish equality with simple normalization
-    if a is b:
+    """
+    Compare two values the way a person would.
+
+    The old comparison was `str.strip()` equality, which meant "Direct" and
+    "direct" were recorded as a contradiction and the value flip-flopped on
+    every ingest. Numbers written as text ("7" and 7) had the same problem.
+    """
+    if a is b or a == b:
         return True
+    if isinstance(a, bool) or isinstance(b, bool):
+        return a == b
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-9
     if isinstance(a, str) and isinstance(b, str):
-        return a.strip() == b.strip()
-    return a == b
+        return " ".join(a.lower().split()) == " ".join(b.lower().split())
+    if isinstance(a, str) or isinstance(b, str):
+        try:
+            return abs(float(a) - float(b)) < 1e-9
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def _entity_key(name: str) -> str:
-    return (name or "").strip().lower()
+    return " ".join((name or "").strip().lower().split())
+
+
+def _loop_key(item: str) -> str:
+    return " ".join((item or "").strip().lower().split())
 
 
 def _merge_entity(existing: Entity, incoming: Entity) -> Entity:
-    # Prefer existing name/type; merge aliases + include the other name as alias if different
     aliases = list(existing.aliases)
-    seen = {a.lower(): True for a in aliases}
+    seen = {a.lower() for a in aliases}
 
-    def add_alias(x: str) -> None:
-        x = (x or "").strip()
-        if not x:
-            return
-        k = x.lower()
-        if k in seen:
-            return
-        seen[k] = True
-        aliases.append(x)
+    def add(value: str) -> None:
+        value = (value or "").strip()
+        if value and value.lower() not in seen:
+            seen.add(value.lower())
+            aliases.append(value)
 
-    # cross-add names as aliases if different
-    if existing.name.strip().lower() != incoming.name.strip().lower():
-        add_alias(incoming.name)
+    if _entity_key(existing.name) != _entity_key(incoming.name):
+        add(incoming.name)
+    for alias in incoming.aliases:
+        add(alias)
 
-    for a in incoming.aliases:
-        add_alias(a)
-
-    # If types differ and existing is "other", upgrade to incoming type
     typ = existing.type
     if typ == "other" and incoming.type != "other":
         typ = incoming.type
-
     return Entity(name=existing.name, type=typ, aliases=aliases)
 
 
-def _upsert_kv_with_temporal_priority(
+def _record_contradiction(
+    contradictions: list[Contradiction], candidate: Contradiction
+) -> bool:
+    """
+    Append a contradiction unless the same change is already recorded.
+
+    These were append-only. Re-ingesting the same conversation re-appended the
+    identical entry every time, so the section grew without bound and the
+    "recent updates" block filled with the same line repeated.
+    """
+    for existing in contradictions:
+        if (
+            existing.key == candidate.key
+            and _value_equal(existing.old, candidate.old)
+            and _value_equal(existing.new, candidate.new)
+        ):
+            if candidate.ts_new > existing.ts_new:
+                existing.ts_new = candidate.ts_new
+                existing.source_new = candidate.source_new
+            return False
+    contradictions.append(candidate)
+    return True
+
+
+def _upsert_kv(
     *,
-    items: List[Any],  # list[Fact] or list[Preference]
-    incoming: Any,  # Fact or Preference
-    contradictions: List[Contradiction],
-    is_fact: bool,
-) -> Tuple[bool, Optional[Contradiction]]:
+    items: list[Any],
+    incoming: Any,
+    contradictions: list[Contradiction],
+    stats: ResolveStats,
+) -> tuple[bool, Contradiction | None]:
     """
-    Upsert by key. If value changes, latest ts wins and we record contradiction.
-    Returns (updated, contradiction_or_none).
+    Insert or update one fact or preference, resolving conflicts by time.
+
+    Key identity runs through the dedupe tiers: exact match first, then a
+    guarded fuzzy match. A pair the polarity guard blocks becomes a new key
+    rather than silently overwriting the belief it resembles.
     """
-    # IMPORTANT: normalize incoming key to prevent "Tone" vs "tone" duplication
-    key = _norm_key(incoming.key)
-    incoming.key = key
+    incoming.key = normalize_key(incoming.key)
+    match = find_match(incoming.key, [it.key for it in items])
+    stats.dedupe.record(match)
 
-    idx = None
-    for i, it in enumerate(items):
-        if _norm_key(it.key) == key:
-            idx = i
-            break
-
-    if idx is None:
+    if not match.is_merge:
         items.append(incoming)
         return True, None
 
+    if match.verdict is Verdict.MERGE:
+        stats.keys_deduped += 1
+
+    target = match.existing
+    idx = next(i for i, it in enumerate(items) if it.key == target)
     current = items[idx]
+    # Canonicalize the stored key on every match. A passport built before the
+    # normalizer was unified can hold "Tone"; without this it lingers forever
+    # and renders differently from the key it merges under.
+    current.key = normalize_key(current.key)
+    incoming.key = current.key
 
-    # Always canonicalize stored key once matched (fixes "Tone" lingering forever)
-    current.key = key
-
-    # If value same, keep the most recent ts/confidence optionally
     if _value_equal(current.value, incoming.value):
-        # Keep the latest ts (if incoming is newer) and max confidence
         if incoming.ts > current.ts:
             current.ts = incoming.ts
             current.source = incoming.source
-        if float(incoming.confidence) > float(current.confidence):
-            current.confidence = float(incoming.confidence)
+        current.confidence = max(float(current.confidence), float(incoming.confidence))
         items[idx] = current
         return False, None
 
-    # Value differs: temporal priority
     if incoming.ts >= current.ts:
-        # record contradiction old -> new
-        c = Contradiction(
-            key=key,
+        change = Contradiction(
+            key=current.key,
             old=current.value,
             new=incoming.value,
             ts_old=current.ts,
@@ -124,13 +175,13 @@ def _upsert_kv_with_temporal_priority(
             source_old=current.source,
             source_new=incoming.source,
         )
-        contradictions.append(c)
+        added = _record_contradiction(contradictions, change)
         items[idx] = incoming
-        return True, c
+        return True, (change if added else None)
 
-    # Incoming is older: still record contradiction, but do not replace current
-    c = Contradiction(
-        key=key,
+    # The incoming value is older than what is stored, so it does not win.
+    change = Contradiction(
+        key=current.key,
         old=incoming.value,
         new=current.value,
         ts_old=incoming.ts,
@@ -138,29 +189,29 @@ def _upsert_kv_with_temporal_priority(
         source_old=incoming.source,
         source_new=current.source,
     )
-    contradictions.append(c)
-    items[idx] = current
-    return False, c
+    added = _record_contradiction(contradictions, change)
+    return False, (change if added else None)
 
 
-def _dedupe_open_loops(existing: List[OpenLoop], incoming: OpenLoop) -> bool:
-    """
-    Light dedupe: same normalized text -> keep newest.
-    Returns True if added/updated.
-    """
-    norm = " ".join((incoming.item or "").strip().lower().split())
-    if not norm:
+def _upsert_open_loop(existing: list[OpenLoop], incoming: OpenLoop) -> bool:
+    key = _loop_key(incoming.item)
+    if not key:
         return False
-
     for i, loop in enumerate(existing):
-        norm2 = " ".join((loop.item or "").strip().lower().split())
-        if norm2 == norm:
-            # keep the newest ts
+        if _loop_key(loop.item) == key:
             if incoming.ts > loop.ts:
                 existing[i] = incoming
                 return True
             return False
+    existing.append(incoming)
+    return True
 
+
+def _upsert_episode(existing: list[Episode], incoming: Episode) -> bool:
+    for i, ep in enumerate(existing):
+        if ep.id == incoming.id:
+            existing[i] = incoming
+            return False
     existing.append(incoming)
     return True
 
@@ -168,101 +219,96 @@ def _dedupe_open_loops(existing: List[OpenLoop], incoming: OpenLoop) -> bool:
 def merge_passport_update(
     base: Passport,
     *,
-    facts: List[Fact],
-    prefs: List[Preference],
-    entities: List[Entity],
-    open_loops: List[OpenLoop],
-) -> Tuple[Passport, ResolveStats]:
-    """
-    Deterministically merge an extractor update into a passport.
-    """
+    facts: list[Fact] | None = None,
+    prefs: list[Preference] | None = None,
+    entities: list[Entity] | None = None,
+    open_loops: list[OpenLoop] | None = None,
+    episodes: list[Episode] | None = None,
+) -> tuple[Passport, ResolveStats]:
+    """Merge an extraction update into a passport. Deterministic throughout."""
     stats = ResolveStats()
 
-    # Facts
-    for f in facts:
-        updated, c = _upsert_kv_with_temporal_priority(
-            items=base.facts,
-            incoming=f,
-            contradictions=base.contradictions,
-            is_fact=True,
+    for fact in facts or []:
+        updated, change = _upsert_kv(
+            items=base.facts, incoming=fact,
+            contradictions=base.contradictions, stats=stats,
         )
-        if updated:
-            stats.facts_upserted += 1
-        if c is not None:
-            stats.contradictions_added += 1
+        stats.facts_upserted += int(updated)
+        stats.contradictions_added += int(change is not None)
 
-    # Preferences
-    for p in prefs:
-        updated, c = _upsert_kv_with_temporal_priority(
-            items=base.prefs,
-            incoming=p,
-            contradictions=base.contradictions,
-            is_fact=False,
+    for pref in prefs or []:
+        updated, change = _upsert_kv(
+            items=base.prefs, incoming=pref,
+            contradictions=base.contradictions, stats=stats,
         )
-        if updated:
-            stats.prefs_upserted += 1
-        if c is not None:
-            stats.contradictions_added += 1
+        stats.prefs_upserted += int(updated)
+        stats.contradictions_added += int(change is not None)
 
-    # Entities (merge by name key, also check aliases overlap)
-    entity_map: Dict[str, Entity] = {_entity_key(e.name): e for e in base.entities}
-    # Build alias index to catch "Sozo Graph" vs "SozoGraph"
-    alias_index: Dict[str, str] = {}
-    for e in base.entities:
-        k = _entity_key(e.name)
-        for a in e.aliases:
-            alias_index[_entity_key(a)] = k
+    _merge_entities(base, entities or [], stats)
 
-    for inc in entities:
-        inc_name_k = _entity_key(inc.name)
-        target_k = None
+    for loop in open_loops or []:
+        stats.open_loops_added += int(_upsert_open_loop(base.open_loops, loop))
 
-        if inc_name_k in entity_map:
-            target_k = inc_name_k
-        elif inc_name_k in alias_index:
-            target_k = alias_index[inc_name_k]
-        else:
-            # Try matching by any incoming alias
-            for a in inc.aliases:
-                ak = _entity_key(a)
-                if ak in entity_map:
-                    target_k = ak
-                    break
-                if ak in alias_index:
-                    target_k = alias_index[ak]
-                    break
+    for episode in episodes or []:
+        stats.episodes_added += int(_upsert_episode(base.episodes, episode))
 
-        if target_k is None:
-            base.entities.append(inc)
-            entity_map[inc_name_k] = inc
-            # add aliases to index
-            for a in inc.aliases:
-                alias_index[_entity_key(a)] = inc_name_k
-            stats.entities_merged += 1
-        else:
-            merged = _merge_entity(entity_map[target_k], inc)
-            entity_map[target_k] = merged
-            # rehydrate base.entities list item
-            for i, e in enumerate(base.entities):
-                if _entity_key(e.name) == target_k:
-                    base.entities[i] = merged
-                    break
-            # refresh alias index with merged aliases
-            for a in merged.aliases:
-                alias_index[_entity_key(a)] = target_k
-            stats.entities_merged += 1
+    if stats.dedupe:
+        audit = base.meta.setdefault("dedupe", {})
+        for bucket, rows in stats.dedupe.to_dict().items():
+            audit.setdefault(bucket, []).extend(rows)
 
-    # Open loops
-    for o in open_loops:
-        if _dedupe_open_loops(base.open_loops, o):
-            stats.open_loops_added += 1
-
-    # Keep deterministic ordering: sort facts/prefs by key, then ts desc
-    base.facts.sort(key=lambda x: (_norm_key(x.key), -x.ts.timestamp()))
-    base.prefs.sort(key=lambda x: (_norm_key(x.key), -x.ts.timestamp()))
-    base.entities.sort(key=lambda x: (_entity_key(x.name), x.type))
-    base.open_loops.sort(key=lambda x: (-x.ts.timestamp(), (x.item or "").lower()))
-    base.contradictions.sort(key=lambda x: (_norm_key(x.key), -x.ts_new.timestamp()))
-
+    _sort(base)
     base.touch()
     return base, stats
+
+
+def _merge_entities(base: Passport, entities: list[Entity], stats: ResolveStats) -> None:
+    by_key: dict[str, Entity] = {_entity_key(e.name): e for e in base.entities}
+    alias_index: dict[str, str] = {}
+    for entity in base.entities:
+        key = _entity_key(entity.name)
+        for alias in entity.aliases:
+            alias_index[_entity_key(alias)] = key
+
+    for incoming in entities:
+        incoming_key = _entity_key(incoming.name)
+        target = None
+        if incoming_key in by_key:
+            target = incoming_key
+        elif incoming_key in alias_index:
+            target = alias_index[incoming_key]
+        else:
+            for alias in incoming.aliases:
+                alias_key = _entity_key(alias)
+                if alias_key in by_key:
+                    target = alias_key
+                    break
+                if alias_key in alias_index:
+                    target = alias_index[alias_key]
+                    break
+
+        if target is None:
+            base.entities.append(incoming)
+            by_key[incoming_key] = incoming
+            for alias in incoming.aliases:
+                alias_index[_entity_key(alias)] = incoming_key
+        else:
+            merged = _merge_entity(by_key[target], incoming)
+            by_key[target] = merged
+            for i, entity in enumerate(base.entities):
+                if _entity_key(entity.name) == target:
+                    base.entities[i] = merged
+                    break
+            for alias in merged.aliases:
+                alias_index[_entity_key(alias)] = target
+        stats.entities_merged += 1
+
+
+def _sort(base: Passport) -> None:
+    """Stable ordering, so the serialized passport is byte-comparable."""
+    base.facts.sort(key=lambda x: (normalize_key(x.key), -x.ts.timestamp()))
+    base.prefs.sort(key=lambda x: (normalize_key(x.key), -x.ts.timestamp()))
+    base.entities.sort(key=lambda x: (_entity_key(x.name), x.type))
+    base.open_loops.sort(key=lambda x: (-x.ts.timestamp(), _loop_key(x.item)))
+    base.contradictions.sort(key=lambda x: (normalize_key(x.key), -x.ts_new.timestamp()))
+    base.episodes.sort(key=lambda x: (x.ts.timestamp(), x.id))

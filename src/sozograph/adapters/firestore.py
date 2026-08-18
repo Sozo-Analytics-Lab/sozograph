@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..interaction import Interaction
-from ..utils import parse_ts, safe_stringify, sha256_json, pick_first
-
+from ..utils import parse_ts, pick_first, safe_stringify, sha256_json
 
 # Common Firestore field names we try first for text & timestamps
 _TEXT_FIELDS = (
@@ -30,10 +29,10 @@ _TS_FIELDS = (
 
 
 def firestore_to_interaction(
-    doc: Dict[str, Any],
+    doc: dict[str, Any],
     *,
-    source: Optional[str] = None,
-    doc_id: Optional[str] = None,
+    source: str | None = None,
+    doc_id: str | None = None,
 ) -> Interaction:
     """
     Convert a Firestore document dict into an Interaction.
@@ -58,7 +57,7 @@ def firestore_to_interaction(
 
     return Interaction(
         id=str(_id),
-        ts=ts or None,
+        **({"ts": ts} if ts is not None else {}),
         type="firestore",
         text=str(text_val),
         source=source,
@@ -67,10 +66,10 @@ def firestore_to_interaction(
 
 
 def firestore_batch_to_interactions(
-    docs: Union[List[Dict[str, Any]], Dict[str, Dict[str, Any]]],
+    docs: list[dict[str, Any]] | dict[str, dict[str, Any]],
     *,
-    collection_path: Optional[str] = None,
-) -> List[Interaction]:
+    collection_path: str | None = None,
+) -> list[Interaction]:
     """
     Convert a batch of Firestore docs to Interactions.
 
@@ -78,7 +77,7 @@ def firestore_batch_to_interactions(
     - list of document dicts
     - dict mapping {doc_id: doc_dict}
     """
-    interactions: List[Interaction] = []
+    interactions: list[Interaction] = []
 
     if isinstance(docs, dict):
         for doc_id, doc in docs.items():

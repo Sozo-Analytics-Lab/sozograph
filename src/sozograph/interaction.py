@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 def utcnow() -> datetime:
@@ -25,7 +25,7 @@ class Interaction(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    id: Optional[str] = Field(
+    id: str | None = Field(
         None,
         description="Optional stable identifier for this interaction (doc id, hash, etc.)",
     )
@@ -46,17 +46,17 @@ class Interaction(BaseModel):
         description="Human-readable summary or transcript text used for reasoning",
     )
 
-    source: Optional[str] = Field(
+    source: str | None = Field(
         None,
         description="Human-readable source pointer, e.g. 'firestore:/applications/abc'",
     )
 
-    data: Optional[Dict[str, Any]] = Field(
+    data: dict[str, Any] | None = Field(
         None,
         description="Raw input payload (kept for hashing / evidence, not for LLM)",
     )
 
-    meta: Dict[str, Any] = Field(
+    meta: dict[str, Any] = Field(
         default_factory=dict,
         description="Optional extra metadata (non-memory, non-LLM)",
     )

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sozograph.schema import Passport, Fact, Preference, Entity, OpenLoop
 from sozograph.resolver import merge_passport_update
+from sozograph.schema import Entity, Fact, OpenLoop, Passport, Preference
 
 
 def dt(s: str) -> datetime:

@@ -1,325 +1,259 @@
-# SozoGraph — The Cognitive Passport for AI Agents
+# SozoGraph
 
-[![PyPI version](https://badge.fury.io/py/sozograph.svg)](https://badge.fury.io/py/sozograph)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+Portable JSON memory for LLM agents.
 
-> **Portable, updatable, truth-preserving memory for agentic AI**
-
-![SozoGraph Thumbnail](https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/examples/B0984453-9159-47AE-B39A-D021F5B474CE.png)
-
-**SozoGraph** turns interaction history into a **portable cognitive snapshot** you can inject into any AI agent context on the fly.
-
-It answers one question cleanly:
-
-> "Given everything that has happened so far, what should an agent **currently believe** about this user?"
-
-Not:
-- what was said
-- what is similar  
-- what might be relevant
-
-But:
-- **what is true now**
-- **what is stable**
-- **what is unresolved**
-- **what is contradictory** (resolved by time)
-
----
-
-## 🎯 Why This Exists
-
-Most "memory" systems treat memory as **text to retrieve**, not **truth to update**:
-
-| Approach | Strengths | Fatal Flaw |
-|----------|-----------|------------|
-| **Prompt stuffing** | Simple | Token explosion, no forgetting, degraded reasoning |
-| **Vector RAG** | Good semantic recall | Answers "what was said" not "what is true now" |
-| **App-specific DBs** | Fast queries | Brittle schemas, zero portability |
-
-**The result?** Agents act like goldfish even when data exists.
-
-### SozoGraph is different
-
-It's a **truth-layer memory object**:
-- ✅ **Typed** — Facts ≠ preferences ≠ entities ≠ open loops
-- ✅ **Temporal** — New updates override old; contradictions are explicit
-- ✅ **Portable** — Lightweight JSON passport + compact context string
-- ✅ **Deterministic** — Same inputs → same memory state
-
----
-
-## 🚀 Quick Start
-
-### Install
+Your agent's memory is a small JSON file. You can read it, diff it, email it, put it in Postgres, ship it to the browser. No vector database. No embedding model. No local weights.
 
 ```bash
 pip install sozograph
 ```
-
-### Try It Now
-
-**[📓 Run the Example Notebook](https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/examples/sozograph_example.ipynb)** — See live demos of ingestion, contradiction tracking, and context export.
-
-### Basic Usage
 
 ```python
 from sozograph import SozoGraph
 
 sg = SozoGraph()
+passport = sg.ingest(conversation)
 
-# Ingest a transcript
-passport, stats = sg.ingest(
-    "I'm building AI agents. I prefer direct answers and hate jargon.",
-    meta={"user_key": "u_123"}
-)
-
-# Export compact context for your agent
-briefing = sg.export_context(passport, budget_chars=2500)
-print(briefing)
+print(passport.context(query="Where does Melanie live?"))
+passport.save("melanie.json")
 ```
 
-**Output:**
+That is the whole API.
 
-```
-SOZOGRAPH PASSPORT v1
-User: u_123
-Updated: 2026-02-04T19:26:00+00:00
+## The idea
 
-Facts (current beliefs):
-- role: AI agent development
+A long context window is not memory. Attention dilutes as the sequence grows, and a model that can ingest a million tokens still loses the thread inside them. Retrieval helps and brings its own failure: one missed chunk is a wrong answer, and now you own a vector store.
 
-Preferences:
-- communication_style: direct, jargon-free
-...
-```
+SozoGraph compresses history into a belief state instead. Two layers:
 
------
+**Facts and preferences.** What is true now, as keys and values. Small enough that every question sees all of it, so retrieval can never hide a fact.
 
-## 💡 Core Capabilities
+**Episodes.** What happened, and when. Compact per-segment summaries with timestamps, produced by the same extraction call at no extra cost. This is what answers "what did she say about the painting in session four", which a flat key-value store threw away by construction.
 
-### 1. Typed Memory (Not Just Text Blobs)
+Only episodes are ranked, and ranking is BM25 in pure Python. Microseconds, no model, nothing to download.
 
-```python
-# Agent sees structured beliefs, not raw transcripts
-{
-  "facts": {"current_project": "sozograph"},
-  "preferences": {"tone": "direct"},
-  "entities": ["Gemini 3", "PyPI"],
-  "open_loops": ["finalize v1 docs"],
-  "contradictions": []
-}
-```
+## Install
 
-**Why this matters:** Agents can update facts without losing preferences, distinguish current state from history, and maintain consistency across sessions.
-
-### 2. Temporal Contradiction Tracking
-
-```python
-# Jan 15: "I live in NYC"
-# Feb 1: "I moved to SF"
-
-# RAG: Retrieves both → confusion
-# SozoGraph: 
-{
-  "facts": {"location": "SF"},
-  "contradictions": [{
-    "key": "location",
-    "old_value": "NYC",
-    "new_value": "SF", 
-    "changed_at": "2026-02-01"
-  }]
-}
-```
-
-### 3. Cross-Architecture Portability
-
-Because passports are lightweight JSON, they work everywhere:
-
-- **Stateless clients** (ElevenLabs WebSocket, voice agents)
-- **Server-side orchestrators** (LangChain, AutoGen)
-- **Edge deployments** (Cloudflare Workers, Vercel Edge)
-
-**Real-world applications:**
-
-- 🏥 **Health & Fitness** — Remember dietary restrictions, workout progressions
-- 📚 **Education** — Track learning weaknesses, adapt assessments
-- 🛍️ **Shopping** — Recall style preferences, purchase history
-- 💬 **Support** — Maintain context across channels
-
------
-
-## 📖 Configuration
-
-Create a `.env` file:
-
-```env
-GEMINI_API_KEY=your_key_here
-SOZOGRAPH_EXTRACTOR_MODEL=gemini-3-flash-preview
-SOZOGRAPH_ENABLE_FALLBACK_SUMMARIZER=true
-SOZOGRAPH_MAX_INTERACTION_CHARS=4000
-SOZOGRAPH_DEFAULT_CONTEXT_BUDGET=3000
-```
-
------
-
-## 🔧 Advanced Usage
-
-### Multi-Interaction Ingestion
-
-```python
-history = [
-    {"createdAt": "2026-02-01T10:00:00Z", "transcript": "I'm renovating my kitchen."},
-    {"createdAt": "2026-02-02T09:30:00Z", "transcript": "I prefer rustic style."},
-    {"createdAt": "2026-02-03T12:10:00Z", "transcript": "Budget is $50k max."},
-]
-
-passport, _ = sg.ingest(history)
-```
-
-### Database Object Ingestion
-
-**Firestore:**
-
-```python
-firestore_doc = {
-  "id": "abc123",
-  "createdAt": "2026-02-03T10:00:00Z",
-  "notes": "User prefers direct answers."
-}
-passport, _ = sg.ingest(firestore_doc, hint="firestore")
-```
-
-**Supabase:**
-
-```python
-supabase_row = {
-  "table": "events",
-  "row": {"event": "preference_update", "notes": "Wants code-first approach"}
-}
-passport, _ = sg.ingest(supabase_row, hint="supabase")
-```
-
-**Firebase RTDB:**
-
-```python
-rtdb_snapshot = {
-  "path": "/users/u1/profile",
-  "value": {"displayName": "Alice", "preferences": {"tone": "casual"}}
-}
-passport, _ = sg.ingest(rtdb_snapshot, hint="rtdb")
-```
-
------
-
-## 🏗️ How It Works
-
-### Ingestion Pipeline
-
-1. **Canonicalize** — Coerce inputs into `Interaction` objects (deterministic)
-1. **Extract** — Gemini 3 Flash reasons about belief updates (strict JSON schema)
-1. **Resolve** — Deterministic merger applies temporal priority, tracks contradictions
-1. **Export** — Compact passport ready for context injection
-
-**Key insight:** This is **belief inference**, not keyword extraction. Gemini 3’s reasoning enables distinguishing facts from preferences, detecting implicit updates, and maintaining temporal consistency.
-
-### What SozoGraph Is NOT
-
-- ❌ Not a graph database
-- ❌ Not RAG / embeddings
-- ❌ Not a conversation logger
-- ❌ Not a DB client (objects-only by design)
-
-**SozoGraph is a memory normalization layer** that sits *before* agent planning, tool use, and retrieval.
-
------
-
-## 📊 Benchmarks
-
-|Metric                |Before (RAG)   |After (SozoGraph)|
-|----------------------|---------------|-----------------|
-|Context size          |~2000 tokens   |~300 tokens      |
-|Factual consistency   |60%            |95%              |
-|Contradictions handled|Silent failures|Explicit tracking|
-
-*Measured on 10-turn conversations with 3 belief updates* (non-scientific experiment)
-
------
-
-## 🗺️ Roadmap
-
-### v1.x (Near-term)
-
-- [ ] CLI tools (`sozograph ingest`, `sozograph render`)
-- [ ] Enhanced input detection for transcript lists
-- [ ] Improved JSON recovery for malformed model outputs
-- [ ] Stronger evidence linking
-
-### v1.5 (Planned)
-
-- [ ] Optional graph engine support (Neo4j, Memgraph)
-- [ ] Cypher-style relational queries
-- [ ] Temporal edge deprecation
-- [ ] Active truth subgraph exports
-
-### v2 (Future)
-
-- [ ] Multi-model support (OpenAI, Claude, local models)
-- [ ] MCP tool server integration
-- [ ] Hybrid graph + vector patterns
-
------
-
-## 🤝 Contributing
-
-We welcome contributions that keep v1 **disciplined and portable**.
-
-### ✅ Good Contributions
-
-- Adapters for new object shapes (objects-only)
-- Resolver logic improvements (deterministic)
-- Tests for edge cases (contradictions, merge conflicts)
-- Prompt engineering for extraction quality
-
-### ❌ Won’t Accept in v1
-
-- RAG/embedding features
-- Graph database integrations (wait for v1.5)
-
-### How to Contribute
-
-1. Fork the repo
-1. Create a branch: `feat/your-feature`
-1. Add tests where relevant
-1. Open a PR with clear explanation + examples
-
------
-
-## 📚 Resources
-
-- **[Example Notebook](https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/examples/sozograph_example.ipynb)** — Interactive demos
-- **[Test Fixtures](https://github.com/Sozo-Analytics-Lab/sozograph/tree/main/tests/fixtures)** — Sample data for validation
-- **[PyPI Package](https://pypi.org/project/sozograph/)** — Latest release
-
------
-
-## 🎓 Philosophy
-
-> “We are not helping agents remember more. We are helping them remember **correctly**.”
-
-SozoGraph enables agents to maintain **consistent beliefs** across sessions, systems, and model providers—something RAG and chat history cannot provide.
-
------
-
-## 📄 License
-
-MIT — [Sozo Analytics Lab](https://github.com/Sozo-Analytics-Lab)
-
-----
-
-**Try it now:**
+The core install is pydantic and nothing else. Pick your engine:
 
 ```bash
-pip install sozograph
+pip install "sozograph[anthropic]"
+pip install "sozograph[openai]"
+pip install "sozograph[gemini]"
+pip install "sozograph[ollama]"      # local, no key, no cloud
+pip install "sozograph[litellm]"     # ~100 providers
+pip install "sozograph[langchain]"   # bring your own chat model
 ```
 
-**Questions?** Open an issue or check the [example notebook](https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/examples/sozograph_example.ipynb).
+Every SDK is imported lazily at call time. Loading, querying, and saving a passport work with no SDK installed at all.
+
+## Use
+
+### Any provider
+
+```python
+SozoGraph()                                   # resolves from the environment
+SozoGraph("anthropic")                        # default model for that provider
+SozoGraph("openai:gpt-4o-mini")               # explicit
+SozoGraph("ollama:llama3.2")                  # local
+SozoGraph("openai:x", base_url="http://localhost:8000/v1")   # vLLM, Groq, Together
+```
+
+Structured output goes to each engine's native mechanism: a forced tool call with a strict schema on Anthropic, `response_format` with `strict: true` on OpenAI, `response_schema` on Gemini, grammar-constrained decoding on Ollama. The schema is never pasted into a prompt and asked for politely.
+
+Bring an existing LangChain model and keep your callbacks, caching, and tracing:
+
+```python
+from langchain_openai import ChatOpenAI
+from sozograph.providers.langchain import LangChainProvider
+
+sg = SozoGraph(LangChainProvider(chat_model=ChatOpenAI(model="gpt-4o-mini")))
+```
+
+### Ingest
+
+Transcripts, chat turns, database rows, or a mixed list.
+
+```python
+sg.ingest("I live in Kwekwe and I prefer terse answers.")
+
+sg.ingest([
+    {"speaker": "Melanie", "text": "I renovated the kitchen.", "ts": "2026-01-05T10:00:00Z"},
+    {"speaker": "Caroline", "text": "What colour?", "ts": "2026-01-05T10:01:00Z"},
+])
+
+sg.ingest({"table": "orders", "row": {"id": 1, "notes": "Wants matte black."}})
+```
+
+Turns are batched into token-bounded segments, one extraction call each. Check the cost before you spend it:
+
+```python
+sg.plan(six_hundred_turns)
+# {'interactions': 600, 'segments': 27, 'api_calls': 27,
+#  'calls_saved_vs_per_interaction': 573,
+#  'estimated_input_tokens': 37721, 'mean_segment_tokens': 1397.1, ...}
+```
+
+Segment count depends on how long the turns are. Nothing is called; this is
+arithmetic on the input.
+
+### Read
+
+```python
+passport.context()                                   # everything, budgeted
+passport.context(query="what did she hang up?")      # episodes ranked by relevance
+passport.context(budget_chars=1500)
+passport.token_estimate()
+```
+
+Facts and preferences are always included in full. The query only reorders episodes.
+
+### Move it around
+
+```python
+passport.save("user.json")
+passport = Passport.load("user.json")
+
+blob = passport.to_compact_dict()     # plain JSON, straight into any database
+passport = Passport.from_dict(blob)
+```
+
+Round trip is lossless. A 1.0 passport loads and migrates. Unknown keys from a future version are preserved rather than dropped.
+
+## Deduplication
+
+State a preference two ways across fifty sessions and a naive extractor records it twice. Enough of that and the passport reacquires the entropy it exists to remove.
+
+Four tiers, in increasing cost:
+
+**Tier 0. Controlled vocabulary.** The extraction prompt carries the passport's existing keys. A model that can see `code_style` already exists reuses it instead of coining `boilerplate_preference`. Free, and it does more work than the other three combined.
+
+**Tier 1. Exact match** on the normalized key.
+
+**Tier 2. Guarded fuzzy match.** Jaro-Winkler plus token-set overlap, zero dependencies.
+
+The obvious version of this rule is dangerous. "Merge above 0.85 similarity" scores `budget_min` against `budget_max` at 0.92, `is_enabled` against `is_disabled` at 0.89, and `has_access` against `has_no_access` at 0.95. Those are opposites, and a false merge destroys a real belief with no undo. Carrying a duplicate key is the cheaper error.
+
+So Tier 2 generates candidates rather than deciding. It auto-merges only on a conjunction of evidence, refuses outright on a polarity conflict, and defers the uncertain band upward.
+
+**Tier 3. Semantic reconciliation.** One call over the whole key list, offline.
+
+```python
+from sozograph import compact
+compact(passport)
+```
+
+This is the only tier that catches `code_style: "minimal"` and `boilerplate_preference: "low"`. Same belief, no shared key, string similarity 0.51. No threshold reaches it.
+
+Every merge is recorded in `passport.meta["dedupe"]`, so a decision that changed your memory can be audited after the fact.
+
+## Benchmarks
+
+The harness lives in [`bench/`](bench/) and targets LoCoMo, the benchmark [LightMem](https://github.com/zjunlp/LightMem) headlines.
+
+```bash
+pip install -e ".[openai,bench]"
+python -m bench.locomo.run --data data/locomo10.json
+```
+
+It matches LightMem's published protocol: GPT-4o-mini as backbone and judge, the four non-adversarial question categories, per-conversation figures. Token and API-call counts are measured, not estimated. Memory construction and question answering run on separate provider instances so the two columns cannot contaminate each other.
+
+The targets to beat, from LightMem's Table 3 ([arXiv:2510.18866](https://arxiv.org/abs/2510.18866)), per conversation:
+
+| System | Accuracy | Memory tokens | API calls |
+|---|---:|---:|---:|
+| LightMem (0.8, 768) | 72.99% | 85.19k | 29.83 |
+| A-MEM | n/a | 1,149.43k | 1,175.47 |
+| Mem0 | 36.49% | 1,693.39k | 1,602.20 |
+
+Those rows are cited, not re-run: reproducing them needs conda, LLMLingua-2, sentence-transformers, Qdrant, and several gigabytes of weights. Run the command above to produce the SozoGraph row on your own hardware. Results are written to `bench/results/` with the full per-conversation breakdown.
+
+Check the dataset parsed before spending anything:
+
+```bash
+python -m bench.locomo.run --data data/locomo10.json --dry-run
+```
+
+## Compared to LightMem
+
+|  | SozoGraph | LightMem |
+|---|---|---|
+| Install | `pip install sozograph` | clone, conda env, pre-download weights |
+| Required dependencies | pydantic (6 packages, 23 MB) | LLMLingua-2, sentence-transformers, Qdrant or FAISS, SQLite |
+| With one cloud provider | 18 packages, 49 MB | the above plus a backbone SDK |
+| Model weights to download | none | a BERT compressor plus an embedding model |
+| Configuration | one string: `"openai:gpt-4o-mini"` | a nested config dict |
+| Where memory lives | a JSON file | a vector database |
+| Move memory between machines | copy the file | export and reindex |
+| Providers | Anthropic, OpenAI, Gemini, Ollama, LiteLLM, LangChain | OpenAI, DeepSeek, Ollama, vLLM, Transformers |
+
+Both are good at the same job. The difference is what you have to install and what you can do with the result.
+
+## Passport format
+
+```json
+{
+  "version": "2.0",
+  "updated_at": "2026-03-11T09:04:00+00:00",
+  "user_key": "u_123",
+  "facts": [
+    {"key": "location", "value": "Kwekwe", "ts": "...", "confidence": 0.95, "source": "seg_a1b2"}
+  ],
+  "prefs": [
+    {"key": "tone", "value": "direct", "ts": "...", "confidence": 0.9, "source": "seg_a1b2"}
+  ],
+  "entities": [
+    {"name": "SozoGraph", "type": "project", "aliases": ["Sozo Graph"]}
+  ],
+  "open_loops": [
+    {"item": "Book the flight", "ts": "...", "source": "seg_a1b2"}
+  ],
+  "contradictions": [
+    {"key": "location", "old": "Harare", "new": "Kwekwe",
+     "ts_old": "...", "ts_new": "...", "source_old": "seg_9f", "source_new": "seg_a1"}
+  ],
+  "episodes": [
+    {"id": "seg_a1b2", "ts": "...", "summary": "Melanie moved to Kwekwe for a new job.",
+     "salience": 0.8, "source": "seg_a1b2",
+     "participants": ["Melanie"], "keywords": ["kwekwe", "job"]}
+  ],
+  "sources": [
+    {"id": "seg_a1b2", "kind": "chat", "ts": "...", "hash": "sha256:..."}
+  ]
+}
+```
+
+Changes are resolved by time. The newest value wins, and the change is recorded rather than discarded, so you can see what your agent used to believe.
+
+## Determinism
+
+The same inputs produce the same passport. Identifiers are SHA-256 of the content, never Python's `hash()`, which is salted per process and gave different ids on every run. Ordering is stable, so two passports built from the same history compare byte for byte.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `SOZOGRAPH_PROVIDER` | auto | `"openai"`, `"anthropic:claude-opus-5"`, ... |
+| `SOZOGRAPH_MODEL` | per provider | Override the model |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | | Whichever is set is used |
+| `SOZOGRAPH_DEFAULT_CONTEXT_BUDGET` | `3000` | Characters per rendered context |
+| `SOZOGRAPH_MAX_INTERACTION_CHARS` | `4000` | Truncation before extraction |
+| `SOZOGRAPH_ENABLE_FALLBACK_SUMMARIZER` | `true` | Summarize unreadable database objects |
+
+## Upgrading from 0.1.x
+
+See [MIGRATING.md](MIGRATING.md). `ingest()` now returns a Passport rather than a tuple, and 0.1.x extraction silently discarded most of what it extracted, so expect noticeably fuller passports.
+
+## Development
+
+```bash
+pip install -e ".[dev,all]"
+pytest
+ruff check src tests bench
+```
+
+The suite runs with no API key and no network. Providers are tested against fake transports.
+
+## Licence
+
+MIT

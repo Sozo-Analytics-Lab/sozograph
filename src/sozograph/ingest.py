@@ -3,21 +3,16 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
-from google import genai
-from google.genai import types
-
+from .adapters.firestore import firestore_batch_to_interactions, firestore_to_interaction
+from .adapters.rtdb import rtdb_to_interaction
+from .adapters.supabase import supabase_row_to_interaction
 from .interaction import Interaction
-from .schema import Passport, SourceRef
-from .utils import utcnow, sha256_json, parse_ts, safe_stringify
-from .adapters.firestore import firestore_to_interaction, firestore_batch_to_interactions
-from .adapters.rtdb import rtdb_to_interaction, rtdb_batch_to_interactions
-from .adapters.supabase import supabase_row_to_interaction, supabase_batch_to_interactions
-from .prompts import (
-    FALLBACK_SUMMARIZER_SYSTEM_PROMPT,
-    FALLBACK_SUMMARIZER_USER_PROMPT_TEMPLATE,
-)
+from .prompts import SUMMARIZER_SYSTEM_PROMPT, SUMMARIZER_USER_PROMPT_TEMPLATE
+from .providers.base import LLMProvider
+from .schema import SourceRef
+from .utils import parse_ts, pick_first, safe_stringify, sha256_json, stable_id, utcnow
 
 
 @dataclass
@@ -40,15 +35,35 @@ def load_ingest_config() -> IngestConfig:
     )
 
 
-def _looks_like_rtdb_envelope(obj: Dict[str, Any]) -> bool:
+def _looks_like_chat_turn(obj: dict[str, Any]) -> bool:
+    """
+    A conversational turn: some text plus, usually, who said it.
+
+    Conversation is the primary thing this library remembers, so the shape
+    deserves first-class handling rather than falling through to a generic
+    key-value stringify that buries the utterance in field names.
+    """
+    has_text = any(isinstance(obj.get(k), str) and obj[k].strip()
+                   for k in ("text", "content", "message", "utterance"))
+    if not has_text:
+        return False
+    if any(k in obj for k in ("speaker", "role", "author", "from", "user")):
+        return True
+    # A bare {text, timestamp} pair is still a turn.
+    return len(set(obj) - {"text", "content", "message", "utterance",
+                           "ts", "timestamp", "time", "date", "id",
+                           "session", "session_id", "dia_id"}) == 0
+
+
+def _looks_like_rtdb_envelope(obj: dict[str, Any]) -> bool:
     return "path" in obj and ("value" in obj or "data" in obj)
 
 
-def _looks_like_supabase_envelope(obj: Dict[str, Any]) -> bool:
+def _looks_like_supabase_envelope(obj: dict[str, Any]) -> bool:
     return "table" in obj and ("row" in obj or "data" in obj)
 
 
-def _guess_hint(obj: Dict[str, Any]) -> str:
+def _guess_hint(obj: dict[str, Any]) -> str:
     """
     Best-effort hint detection when user doesn't specify.
     """
@@ -58,6 +73,10 @@ def _guess_hint(obj: Dict[str, Any]) -> str:
         return "supabase"
     # Firestore docs are just dicts; we treat default dicts as firestore-ish.
     return "firestore"
+
+
+#: Interaction types whose text came from a person and is already readable.
+_HUMAN_TEXT_TYPES = frozenset({"chat", "transcript", "note", "email", "message"})
 
 
 def _is_text_too_weak(text: str) -> bool:
@@ -78,51 +97,45 @@ def _is_text_too_weak(text: str) -> bool:
     return False
 
 
-class FallbackSummarizer:
+class Summarizer:
     """
-    Gemini fallback summarizer used ONLY when we cannot derive meaningful text
-    deterministically from an object.
+    Turns an unreadable database object into text worth extracting from.
+
+    Used only when the deterministic path cannot produce meaningful text, so
+    most ingestions never call a model here at all.
     """
 
-    def __init__(self, api_key: str, model: str = "gemini-3-flash-preview"):
-        self.client = genai.Client(api_key=api_key)
-        self.model = model
+    def __init__(self, provider: LLMProvider):
+        self.provider = provider
 
     def summarize(
         self,
         obj: Any,
         *,
         source_hint: str,
-        source_pointer: Optional[str],
+        source_pointer: str | None,
         ts_iso: str,
     ) -> str:
-        object_json = ""
         try:
             object_json = json.dumps(obj, indent=2, ensure_ascii=False, default=str)
-        except Exception:
+        except (TypeError, ValueError):
             object_json = safe_stringify(obj)
 
-        prompt = FALLBACK_SUMMARIZER_USER_PROMPT_TEMPLATE.format(
-            source_hint=source_hint,
-            source_pointer=source_pointer or "",
-            ts_iso=ts_iso,
-            object_json=object_json,
-        )
-
-        resp = self.client.models.generate_content(
-            model=self.model,
-            contents=[
-                types.Content(role="system", parts=[types.Part(text=FALLBACK_SUMMARIZER_SYSTEM_PROMPT)]),
-                types.Content(role="user", parts=[types.Part(text=prompt)]),
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.2,
+        text = self.provider.complete_text(
+            system=SUMMARIZER_SYSTEM_PROMPT,
+            user=SUMMARIZER_USER_PROMPT_TEMPLATE.format(
+                source_hint=source_hint,
+                source_pointer=source_pointer or "",
+                ts_iso=ts_iso,
+                object_json=object_json,
             ),
-        )
+            temperature=0.2,
+        ).strip()
+        return text or "Database object (unstructured)."
 
-        txt = (resp.text or "").strip()
-        # Final guard: never return empty
-        return txt if txt else "Database object (unstructured)."
+
+# Kept so existing imports keep resolving for one release.
+FallbackSummarizer = Summarizer
 
 
 def make_source_ref(
@@ -130,8 +143,8 @@ def make_source_ref(
     source_id: str,
     kind: str,
     payload: Any,
-    ts: Optional[Any] = None,
-    source_pointer: Optional[str] = None,
+    ts: Any | None = None,
+    source_pointer: str | None = None,
 ) -> SourceRef:
     dt = parse_ts(ts) or utcnow()
     return SourceRef(
@@ -146,9 +159,9 @@ def make_source_ref(
 def coerce_to_interactions(
     item: Any,
     *,
-    hint: Optional[str] = None,
-    meta: Optional[Dict[str, Any]] = None,
-) -> Tuple[List[Interaction], List[SourceRef]]:
+    hint: str | None = None,
+    meta: dict[str, Any] | None = None,
+) -> tuple[list[Interaction], list[SourceRef]]:
     """
     Convert arbitrary input into a list of Interactions + SourceRefs.
 
@@ -156,12 +169,12 @@ def coerce_to_interactions(
     Gemini fallback summarization is applied later by apply_fallback_summaries().
     """
     meta = meta or {}
-    interactions: List[Interaction] = []
-    sources: List[SourceRef] = []
+    interactions: list[Interaction] = []
+    sources: list[SourceRef] = []
 
     # 1) String transcript
     if isinstance(item, str):
-        src_id = meta.get("source_id") or f"t{abs(hash(item)) % 10_000_000}"
+        src_id = meta.get("source_id") or stable_id("t", item)
         src_ptr = meta.get("source") or meta.get("source_pointer")
         ts = parse_ts(meta.get("ts")) or utcnow()
 
@@ -198,9 +211,42 @@ def coerce_to_interactions(
             sources.extend(sub_sources)
         return interactions, sources
 
-    # 3) Dict objects (DB docs / envelopes)
+    # 3) Dict objects (DB docs / envelopes / chat turns)
     if isinstance(item, dict):
         used_hint = (hint or item.get("_hint") or _guess_hint(item)).lower().strip()
+
+        if used_hint == "chat" or (hint is None and _looks_like_chat_turn(item)):
+            text = pick_first(item, ("text", "content", "message", "utterance")) or ""
+            speaker = pick_first(item, ("speaker", "role", "author", "from", "user"))
+            ts = (parse_ts(pick_first(item, ("ts", "timestamp", "time", "date")))
+                  or parse_ts(meta.get("ts")) or utcnow())
+            turn_meta = dict(meta)
+            if speaker:
+                turn_meta["speaker"] = str(speaker)
+            session = pick_first(item, ("session", "session_id", "thread_id"))
+            if session is not None:
+                turn_meta["session"] = str(session)
+
+            src_id = meta.get("source_id") or stable_id("c", item)
+            src_ptr = meta.get("source") or meta.get("source_pointer")
+            interactions.append(
+                Interaction(
+                    id=str(item.get("id") or item.get("dia_id") or sha256_json(item)[:16]),
+                    ts=ts,
+                    type="chat",
+                    text=str(text),
+                    source=src_ptr,
+                    data=item,
+                    meta=turn_meta,
+                )
+            )
+            sources.append(
+                make_source_ref(
+                    source_id=src_id, kind="chat", payload=item,
+                    ts=ts, source_pointer=src_ptr,
+                )
+            )
+            return interactions, sources
 
         # RTDB envelope: {path, value}
         if used_hint == "rtdb" or _looks_like_rtdb_envelope(item):
@@ -208,7 +254,7 @@ def coerce_to_interactions(
             value = item.get("value", item.get("data"))
             it = rtdb_to_interaction(value, path=path)
 
-            src_id = meta.get("source_id") or f"r{abs(hash(sha256_json(item))) % 10_000_000}"
+            src_id = meta.get("source_id") or stable_id("r", item)
             sources.append(
                 make_source_ref(
                     source_id=src_id,
@@ -227,7 +273,7 @@ def coerce_to_interactions(
             row = item.get("row", item.get("data", item))
             it = supabase_row_to_interaction(row if isinstance(row, dict) else {"value": row}, table=table)
 
-            src_id = meta.get("source_id") or f"s{abs(hash(sha256_json(item))) % 10_000_000}"
+            src_id = meta.get("source_id") or stable_id("s", item)
             sources.append(
                 make_source_ref(
                     source_id=src_id,
@@ -248,8 +294,15 @@ def coerce_to_interactions(
                 col_path = meta.get("source") or meta.get("collection_path")
                 its = firestore_batch_to_interactions(item, collection_path=col_path)
                 # One source per interaction for traceability
-                for it in its:
-                    src_id = meta.get("source_id") or f"f{abs(hash(sha256_json(it.data))) % 10_000_000}"
+                base_src_id = meta.get("source_id")
+                for doc_idx, it in enumerate(its):
+                    # Suffix a caller-supplied id: without it every doc in the
+                    # batch shares one SourceRef id and upsert_source keeps only
+                    # the last.
+                    src_id = (
+                        f"{base_src_id}_{doc_idx}" if base_src_id
+                        else stable_id("f", it.data)
+                    )
                     sources.append(
                         make_source_ref(
                             source_id=src_id,
@@ -267,7 +320,7 @@ def coerce_to_interactions(
             src_ptr = meta.get("source") or meta.get("source_pointer") or None
             it = firestore_to_interaction(item, source=src_ptr, doc_id=doc_id)
 
-            src_id = meta.get("source_id") or f"f{abs(hash(sha256_json(item))) % 10_000_000}"
+            src_id = meta.get("source_id") or stable_id("f", item)
             sources.append(
                 make_source_ref(
                     source_id=src_id,
@@ -283,7 +336,7 @@ def coerce_to_interactions(
         # Unknown dict: treat as generic event
         text = safe_stringify(item)
         ts = parse_ts(item.get("ts") if isinstance(item, dict) else None) or utcnow()
-        src_id = meta.get("source_id") or f"u{abs(hash(sha256_json(item))) % 10_000_000}"
+        src_id = meta.get("source_id") or stable_id("u", item)
         src_ptr = meta.get("source") or meta.get("source_pointer")
 
         interactions.append(
@@ -311,7 +364,7 @@ def coerce_to_interactions(
     # 4) Fallback for other types
     text = safe_stringify(item)
     ts = parse_ts(meta.get("ts")) or utcnow()
-    src_id = meta.get("source_id") or f"x{abs(hash(str(item))) % 10_000_000}"
+    src_id = meta.get("source_id") or stable_id("x", str(item))
     src_ptr = meta.get("source") or meta.get("source_pointer")
     interactions.append(
         Interaction(
@@ -337,35 +390,40 @@ def coerce_to_interactions(
 
 
 def apply_fallback_summaries(
-    interactions: List[Interaction],
+    interactions: list[Interaction],
     *,
-    sources: List[SourceRef],
-    api_key: Optional[str],
+    sources: list[SourceRef],
+    provider: LLMProvider | None,
     cfg: IngestConfig,
-    fallback_model: str = "gemini-3-flash",
-) -> List[Interaction]:
+) -> list[Interaction]:
     """
-    For any interaction whose text is too weak/noisy, optionally call Gemini fallback
-    summarizer to get a better Interaction.text. This minimizes user pain.
+    Improve any interaction whose text is too weak to extract from.
 
-    We DO NOT change Interaction.data; only improve Interaction.text.
+    Only Interaction.text changes; Interaction.data is left untouched so the
+    evidence hash still refers to the original payload.
     """
-    if not cfg.enable_fallback_summarizer:
-        return interactions
-    if not api_key:
+    if not cfg.enable_fallback_summarizer or provider is None:
         return interactions
 
-    summarizer = FallbackSummarizer(api_key=api_key, model=fallback_model)
+    summarizer = Summarizer(provider)
 
     # Map source id by interaction id/source pointer best-effort
     # (In v1 we keep this simple: use first matching source if possible)
-    src_by_pointer: Dict[str, SourceRef] = {}
+    src_by_pointer: dict[str, SourceRef] = {}
     for s in sources:
         if s.source:
             src_by_pointer[s.source] = s
 
-    out: List[Interaction] = []
+    out: list[Interaction] = []
     for it in interactions:
+        # Human text is never summarized. "What colour did you go with?" is 28
+        # characters and perfectly clear; running it through a model to be told
+        # so costs a call per short turn and changes nothing. The summarizer
+        # exists for database objects that stringify into noise.
+        if it.type in _HUMAN_TEXT_TYPES:
+            out.append(it)
+            continue
+
         txt = it.text or ""
         # truncate before evaluating (avoid massive stringify)
         if len(txt) > cfg.max_interaction_chars:
@@ -390,48 +448,3 @@ def apply_fallback_summaries(
         out.append(it)
 
     return out
-
-
-# ---------------------------------------------------------------------------
-# ✅ v1 Public API: ingest()
-# ---------------------------------------------------------------------------
-
-def ingest(
-    passport: Passport,
-    item: Any,
-    *,
-    hint: Optional[str] = None,
-    meta: Optional[Dict[str, Any]] = None,
-    api_key: Optional[str] = None,
-    cfg: Optional[IngestConfig] = None,
-    fallback_model: str = "gemini-3-flash",
-) -> Tuple[Passport, List[Interaction]]:
-    """
-    v1 ingestion entry-point.
-
-    - Accepts: transcript string, list of transcripts, Firestore/RTDB/Supabase objects, or mixed list.
-    - Canonicalizes input -> Interactions + SourceRefs
-    - Optionally improves weak Interaction.text using Gemini fallback summarizer (NOT the extractor)
-    - Always upserts sources into passport, and touches updated_at.
-
-    Returns (passport, interactions) so the caller can pass interactions into the extractor step.
-    """
-    cfg = cfg or load_ingest_config()
-
-    interactions, sources = coerce_to_interactions(item, hint=hint, meta=meta)
-
-    # optional fallback text improvement
-    interactions = apply_fallback_summaries(
-        interactions,
-        sources=sources,
-        api_key=api_key,
-        cfg=cfg,
-        fallback_model=fallback_model,
-    )
-
-    # record sources on passport
-    for s in sources:
-        passport.upsert_source(s)
-
-    passport.touch()
-    return passport, interactions

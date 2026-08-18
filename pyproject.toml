@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sozograph"
-version = "0.1.1"
-description = "SozoGraph v1: transcript/db object -> portable cognitive passport JSON"
+version = "0.2.0"
+description = "Portable JSON memory for LLM agents. No vector DB, no embeddings, any provider."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "Rairo Mukamuri" }
 ]
-keywords = ["memory", "agents", "gemini", "context", "passport", "knowledge"]
+keywords = ["memory", "agents", "llm", "context", "passport", "rag", "knowledge"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -24,22 +24,33 @@ classifiers = [
   "Topic :: Software Development :: Libraries",
 ]
 
+# The core install is pure Python plus pydantic. Every provider SDK is an
+# optional extra, imported lazily at call time. This is the portability claim:
+# a passport can be loaded, queried, and saved with no SDK and no network.
 dependencies = [
-  "google-genai>=0.6.0",
   "pydantic>=2.7.0",
-  "python-dotenv>=1.0.1",
 ]
 
 [project.optional-dependencies]
-dev = [
-  "pytest>=8.0.0",
-  "ruff>=0.6.0",
+anthropic = ["anthropic>=0.40.0"]
+openai = ["openai>=1.40.0"]
+gemini = ["google-genai>=0.6.0"]
+ollama = ["ollama>=0.4.0"]
+litellm = ["litellm>=1.50.0"]
+langchain = ["langchain-core>=0.3.0"]
+all = [
+  "anthropic>=0.40.0",
+  "openai>=1.40.0",
+  "google-genai>=0.6.0",
+  "ollama>=0.4.0",
 ]
+bench = ["openai>=1.40.0", "tqdm>=4.66.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
 
 [project.urls]
-Homepage = "https://github.com/quantilytix/sozograph"
-Repository = "https://github.com/quantilytix/sozograph"
-Issues = "https://github.com/quantilytix/sozograph/issues"
+Homepage = "https://github.com/Sozo-Analytics-Lab/sozograph"
+Repository = "https://github.com/Sozo-Analytics-Lab/sozograph"
+Issues = "https://github.com/Sozo-Analytics-Lab/sozograph/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/sozograph"]
@@ -62,3 +73,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+  "live: hits a real provider API; requires a key and is skipped by default",
+]

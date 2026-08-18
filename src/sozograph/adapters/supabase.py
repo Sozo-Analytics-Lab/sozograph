@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..interaction import Interaction
-from ..utils import parse_ts, safe_stringify, sha256_json, pick_first
-
+from ..utils import parse_ts, pick_first, safe_stringify, sha256_json
 
 _TEXT_FIELDS = (
     "text",
@@ -31,11 +30,11 @@ _TS_FIELDS = (
 
 
 def supabase_row_to_interaction(
-    row: Dict[str, Any],
+    row: dict[str, Any],
     *,
-    table: Optional[str] = None,
-    source: Optional[str] = None,
-    row_id: Optional[str] = None,
+    table: str | None = None,
+    source: str | None = None,
+    row_id: str | None = None,
 ) -> Interaction:
     """
     Convert a Supabase table row into an Interaction.
@@ -57,7 +56,7 @@ def supabase_row_to_interaction(
 
     return Interaction(
         id=str(_id),
-        ts=ts or None,
+        **({"ts": ts} if ts is not None else {}),
         type="supabase",
         text=str(text_val),
         source=src,
@@ -67,10 +66,10 @@ def supabase_row_to_interaction(
 
 
 def supabase_batch_to_interactions(
-    rows: Union[List[Dict[str, Any]], Dict[str, Dict[str, Any]]],
+    rows: list[dict[str, Any]] | dict[str, dict[str, Any]],
     *,
-    table: Optional[str] = None,
-) -> List[Interaction]:
+    table: str | None = None,
+) -> list[Interaction]:
     """
     Convert many rows to Interactions.
 
@@ -78,7 +77,7 @@ def supabase_batch_to_interactions(
     - list of rows
     - dict mapping {row_id: row_dict}
     """
-    interactions: List[Interaction] = []
+    interactions: list[Interaction] = []
 
     if isinstance(rows, dict):
         for row_id, row in rows.items():

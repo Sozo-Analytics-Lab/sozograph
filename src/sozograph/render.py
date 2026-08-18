@@ -1,217 +1,213 @@
+"""
+Render a passport into the text an agent actually reads.
+
+One build path, parameterized by section caps. The previous version duplicated
+its entire body inside a nested closure so that budget trimming could re-run
+it, which meant every format change had to be made twice by hand.
+"""
 from __future__ import annotations
 
-from typing import Any, List, Tuple
+from dataclasses import dataclass, replace
+from typing import Any
 
-from .schema import Passport, Fact, Preference, Entity, OpenLoop, Contradiction
+from .retrieve import rank
+from .schema import Contradiction, Entity, Episode, Fact, OpenLoop, Passport, Preference
 from .utils import normalize_key
 
+_DAY = 86_400.0
 
-def _val_to_str(v: Any, max_len: int = 220) -> str:
-    if v is None:
+
+@dataclass(frozen=True)
+class Caps:
+    """How many of each section to include."""
+
+    facts: int = 60
+    prefs: int = 30
+    entities: int = 15
+    open_loops: int = 12
+    contradictions: int = 8
+    episodes: int = 12
+
+
+#: Trimmed in this order when over budget. Episodes go first because the belief
+#: state is the part that must survive: losing a fact loses knowledge, while
+#: losing an episode loses only detail. Facts have a floor and are trimmed last.
+_TRIM_ORDER = (
+    ("episodes", 0),
+    ("contradictions", 0),
+    ("entities", 3),
+    ("open_loops", 2),
+    ("prefs", 5),
+    ("facts", 8),
+)
+
+
+def _val_to_str(value: Any, max_len: int = 220) -> str:
+    if value is None:
         s = "null"
-    elif isinstance(v, bool):
-        s = "true" if v else "false"
-    elif isinstance(v, (int, float)):
-        s = str(v)
-    elif isinstance(v, str):
-        s = v.strip()
+    elif isinstance(value, bool):
+        s = "true" if value else "false"
+    elif isinstance(value, (int, float)):
+        s = str(value)
+    elif isinstance(value, str):
+        s = value.strip()
     else:
-        # compact repr for simple JSON-ish values
-        s = str(v)
-
-    if len(s) > max_len:
-        return s[: max_len - 1] + "…"
-    return s
+        s = str(value)
+    return s[: max_len - 1] + "…" if len(s) > max_len else s
 
 
-def _score_item(ts, confidence: float) -> float:
-    # Simple v1 scoring: prefer newer + higher confidence
-    # (No explicit decay weights in v1)
-    try:
-        t = ts.timestamp()
-    except Exception:
-        t = 0.0
-    return (t / 1_000_000_000.0) + (confidence * 0.5)
+def _kv_prior(now: float, oldest: float):
+    """
+    Score a fact or preference by recency and confidence.
+
+    The previous formula was `ts.timestamp() / 1e9 + confidence * 0.5`, which
+    put recency on a ~1.77 scale and confidence on a 0.5 scale. A 0.1 gap in
+    confidence outranked roughly three years of recency, so the weighting was
+    effectively confidence-only and by accident. Both terms are normalized to
+    0..1 here and the weights are stated.
+    """
+    span = max(now - oldest, _DAY)
+
+    def score(item: Any) -> float:
+        recency = 1.0 - min(1.0, (now - item.ts.timestamp()) / span)
+        return 0.6 * recency + 0.4 * float(item.confidence)
+
+    return score
 
 
-def _pick_top_facts(facts: List[Fact], n: int) -> List[Fact]:
-    ranked = sorted(facts, key=lambda f: _score_item(f.ts, float(f.confidence)), reverse=True)
-    return ranked[:n]
+def _time_prior(now: float, oldest: float):
+    span = max(now - oldest, _DAY)
+
+    def score(item: Any) -> float:
+        stamp = getattr(item, "ts", None) or getattr(item, "ts_new", None)
+        return 1.0 - min(1.0, (now - stamp.timestamp()) / span)
+
+    return score
 
 
-def _pick_top_prefs(prefs: List[Preference], n: int) -> List[Preference]:
-    ranked = sorted(prefs, key=lambda p: _score_item(p.ts, float(p.confidence)), reverse=True)
-    return ranked[:n]
+def _episode_prior(now: float, oldest: float):
+    span = max(now - oldest, _DAY)
+
+    def score(ep: Episode) -> float:
+        recency = 1.0 - min(1.0, (now - ep.ts.timestamp()) / span)
+        return 0.5 * recency + 0.5 * float(ep.salience)
+
+    return score
 
 
-def _pick_top_open_loops(open_loops: List[OpenLoop], n: int) -> List[OpenLoop]:
-    ranked = sorted(open_loops, key=lambda o: o.ts, reverse=True)
-    return ranked[:n]
+def _bounds(passport: Passport) -> tuple:
+    stamps = [f.ts.timestamp() for f in passport.facts]
+    stamps += [p.ts.timestamp() for p in passport.prefs]
+    stamps += [o.ts.timestamp() for o in passport.open_loops]
+    stamps += [e.ts.timestamp() for e in passport.episodes]
+    stamps += [c.ts_new.timestamp() for c in passport.contradictions]
+    stamps.append(passport.updated_at.timestamp())
+    return max(stamps), min(stamps)
 
 
-def _pick_top_contradictions(contradictions: List[Contradiction], n: int) -> List[Contradiction]:
-    ranked = sorted(contradictions, key=lambda c: c.ts_new, reverse=True)
-    return ranked[:n]
+def _select(items: list[Any], query: str | None, prior, limit: int,
+            text_of=None) -> list[Any]:
+    if limit <= 0 or not items:
+        return []
+    if text_of is None:
+        # Facts, prefs and loops are not query-ranked: the belief state goes in
+        # whole. Only ordering changes, so that a trim keeps the best ones.
+        scored = rank(items, None, text_of=lambda x: "", limit=limit, prior=prior)
+    else:
+        scored = rank(items, query, text_of=text_of, limit=limit, prior=prior)
+    return [s.item for s in scored]
 
 
-def _entities_summary(entities: List[Entity], max_items: int = 12) -> List[str]:
-    # Keep it short; entities are optional context, not the main payload
-    out: List[str] = []
-    for e in entities[:max_items]:
-        if e.type and e.type != "other":
-            out.append(f"{e.name} ({e.type})")
-        else:
-            out.append(e.name)
-    return out
+def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> list[str]:
+    now, oldest = _bounds(passport)
+    kv_prior = _kv_prior(now, oldest)
+    t_prior = _time_prior(now, oldest)
+
+    facts: list[Fact] = _select(passport.facts, query, kv_prior, caps.facts)
+    prefs: list[Preference] = _select(passport.prefs, query, kv_prior, caps.prefs)
+    loops: list[OpenLoop] = _select(passport.open_loops, query, t_prior, caps.open_loops)
+    changes: list[Contradiction] = _select(
+        passport.contradictions, query, t_prior, caps.contradictions
+    )
+    entities: list[Entity] = list(passport.entities)[: max(0, caps.entities)]
+    episodes: list[Episode] = _select(
+        passport.episodes,
+        query,
+        _episode_prior(now, oldest),
+        caps.episodes,
+        text_of=lambda e: e.search_text(),
+    )
+    if episodes:
+        episodes = sorted(episodes, key=lambda e: e.ts)
+
+    lines: list[str] = [header]
+    if passport.user_key:
+        lines.append(f"User: {passport.user_key}")
+    lines.append(f"Updated: {passport.updated_at.isoformat()}")
+
+    def section(title: str, rows: list[str]) -> None:
+        if not rows:
+            return
+        lines.append("")
+        lines.append(title)
+        lines.extend(rows)
+
+    section("Facts (current beliefs):",
+            [f"- {normalize_key(f.key)}: {_val_to_str(f.value)}" for f in facts])
+    section("Preferences:",
+            [f"- {normalize_key(p.key)}: {_val_to_str(p.value)}" for p in prefs])
+    section("Key entities:",
+            [f"- {e.name} ({e.type})" if e.type and e.type != "other" else f"- {e.name}"
+             for e in entities])
+    section("Open loops:",
+            [f"- {_val_to_str(o.item, max_len=240)}" for o in loops])
+    section("Recent updates (contradictions resolved by time):",
+            [f"- {normalize_key(c.key)} changed: {_val_to_str(c.old)} -> {_val_to_str(c.new)}"
+             for c in changes])
+    section("What happened:",
+            [f"- [{e.ts.date().isoformat()}] {_val_to_str(e.summary, max_len=400)}"
+             for e in episodes])
+    return lines
 
 
 def export_context(
     passport: Passport,
     *,
+    query: str | None = None,
     budget_chars: int = 3000,
-    header: str = "SOZOGRAPH PASSPORT v1",
+    header: str = "SOZOGRAPH PASSPORT",
+    caps: Caps | None = None,
 ) -> str:
     """
-    Render a compact, stable context string.
+    Render the passport as a context block.
 
-    Strategy:
-    - Start with a stable header
-    - Include: facts, prefs, entities, open loops, contradictions (in that order)
-    - Respect budget by trimming least-important sections first
+    With a `query`, episodes are ranked against it lexically. Without one they
+    are ordered by recency and salience. Facts and preferences are always
+    included in full while the budget allows, so a retrieval miss can never
+    hide a known fact.
     """
-    # Guard rails
     budget_chars = max(400, int(budget_chars or 3000))
+    current = caps or Caps()
 
-    # Pick reasonable caps (we'll trim further if needed)
-    facts = _pick_top_facts(passport.facts, n=25)
-    prefs = _pick_top_prefs(passport.prefs, n=15)
-    open_loops = _pick_top_open_loops(passport.open_loops, n=10)
-    contradictions = _pick_top_contradictions(passport.contradictions, n=8)
-    entities = passport.entities or []
+    lines = _build(passport, current, query, header)
+    if len("\n".join(lines)) <= budget_chars:
+        return "\n".join(lines)
 
-    lines: List[str] = []
-    lines.append(header)
-    if passport.user_key:
-        lines.append(f"User: {passport.user_key}")
-    lines.append(f"Updated: {passport.updated_at.isoformat()}")
-
-    # Facts
-    if facts:
-        lines.append("")
-        lines.append("Facts (current beliefs):")
-        for f in facts:
-            lines.append(f"- {normalize_key(f.key)}: {_val_to_str(f.value)}")
-
-    # Preferences
-    if prefs:
-        lines.append("")
-        lines.append("Preferences:")
-        for p in prefs:
-            lines.append(f"- {normalize_key(p.key)}: {_val_to_str(p.value)}")
-
-    # Entities
-    ent_lines = _entities_summary(entities)
-    if ent_lines:
-        lines.append("")
-        lines.append("Key entities:")
-        for s in ent_lines:
-            lines.append(f"- {s}")
-
-    # Open loops
-    if open_loops:
-        lines.append("")
-        lines.append("Open loops:")
-        for o in open_loops:
-            lines.append(f"- {_val_to_str(o.item, max_len=240)}")
-
-    # Contradictions
-    if contradictions:
-        lines.append("")
-        lines.append("Recent updates (contradictions resolved by time):")
-        for c in contradictions:
-            lines.append(
-                f"- {normalize_key(c.key)} changed: {_val_to_str(c.old)} -> {_val_to_str(c.new)}"
-            )
-
-    # Budget enforcement (trim bottom-up)
-    def join_len(ls: List[str]) -> int:
-        return len("\n".join(ls))
-
-    # If over budget, progressively trim sections by reducing item counts
-    if join_len(lines) > budget_chars:
-        # Helper to rebuild with smaller caps
-        def rebuild(f_n: int, p_n: int, e_n: int, o_n: int, c_n: int) -> List[str]:
-            f2 = _pick_top_facts(passport.facts, n=f_n)
-            p2 = _pick_top_prefs(passport.prefs, n=p_n)
-            o2 = _pick_top_open_loops(passport.open_loops, n=o_n)
-            c2 = _pick_top_contradictions(passport.contradictions, n=c_n)
-            e2 = passport.entities[:e_n] if passport.entities else []
-
-            out: List[str] = []
-            out.append(header)
-            if passport.user_key:
-                out.append(f"User: {passport.user_key}")
-            out.append(f"Updated: {passport.updated_at.isoformat()}")
-
-            if f2:
-                out.append("")
-                out.append("Facts (current beliefs):")
-                for f in f2:
-                    out.append(f"- {normalize_key(f.key)}: {_val_to_str(f.value)}")
-
-            if p2:
-                out.append("")
-                out.append("Preferences:")
-                for p in p2:
-                    out.append(f"- {normalize_key(p.key)}: {_val_to_str(p.value)}")
-
-            ent2 = _entities_summary(e2, max_items=e_n)
-            if ent2:
-                out.append("")
-                out.append("Key entities:")
-                for s in ent2:
-                    out.append(f"- {s}")
-
-            if o2:
-                out.append("")
-                out.append("Open loops:")
-                for o in o2:
-                    out.append(f"- {_val_to_str(o.item, max_len=240)}")
-
-            if c2:
-                out.append("")
-                out.append("Recent updates (contradictions resolved by time):")
-                for c in c2:
-                    out.append(
-                        f"- {normalize_key(c.key)} changed: {_val_to_str(c.old)} -> {_val_to_str(c.new)}"
-                    )
-
-            return out
-
-        # Start trimming least important first: contradictions, open loops, entities, prefs, facts
-        caps = [25, 15, 12, 10, 8]  # f, p, e, o, c
-        for _ in range(80):
-            if join_len(lines) <= budget_chars:
+    # Shrink the least load-bearing section that still has room to give.
+    for _ in range(400):
+        for name, floor in _TRIM_ORDER:
+            value = getattr(current, name)
+            if value > floor:
+                step = max(1, value // 4)
+                current = replace(current, **{name: max(floor, value - step)})
                 break
+        else:
+            text = "\n".join(lines)
+            return text[: budget_chars - 1] + "…"
 
-            # pick a trim step
-            f_n, p_n, e_n, o_n, c_n = caps
-            if c_n > 0:
-                c_n = max(0, c_n - 1)
-            elif o_n > 0:
-                o_n = max(0, o_n - 1)
-            elif e_n > 0:
-                e_n = max(0, e_n - 1)
-            elif p_n > 0:
-                p_n = max(0, p_n - 1)
-            elif f_n > 5:
-                f_n = max(5, f_n - 1)
-            else:
-                # last resort: hard truncate joined text
-                txt = "\n".join(lines)
-                return txt[: budget_chars - 1] + "…"
+        lines = _build(passport, current, query, header)
+        if len("\n".join(lines)) <= budget_chars:
+            return "\n".join(lines)
 
-            caps = [f_n, p_n, e_n, o_n, c_n]
-            lines = rebuild(f_n, p_n, e_n, o_n, c_n)
-
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return text[: budget_chars - 1] + "…" if len(text) > budget_chars else text

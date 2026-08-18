@@ -1,0 +1,9 @@
+{
+  "id": "app_7781",
+  "createdAt": "2026-02-01T09:12:00Z",
+  "updatedAt": "2026-02-04T16:30:00Z",
+  "title": "SozoGraph v1 launch checklist",
+  "status": "in_review",
+  "owner": "Quantilytix",
+  "notes": "Ship the portable passport first. Graph engine is out of scope for v1."
+}

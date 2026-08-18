@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sozograph.schema import Passport, Fact, Preference, Entity, OpenLoop, Contradiction
 from sozograph.render import export_context
+from sozograph.schema import Contradiction, Entity, Fact, OpenLoop, Passport, Preference
 
 
 def dt(s: str) -> datetime:
@@ -30,7 +30,7 @@ def test_export_context_basic_sections():
 
     txt = export_context(p, budget_chars=3000)
 
-    assert "SOZOGRAPH PASSPORT v1" in txt
+    assert "SOZOGRAPH PASSPORT" in txt
     assert "Facts (current beliefs):" in txt
     assert "- role: developer" in txt
     assert "Preferences:" in txt

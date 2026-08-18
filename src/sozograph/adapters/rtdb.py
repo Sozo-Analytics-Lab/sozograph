@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..interaction import Interaction
-from ..utils import parse_ts, safe_stringify, sha256_json, pick_first
-
+from ..utils import parse_ts, pick_first, safe_stringify, sha256_json
 
 # Common timestamp-like fields in RTDB nodes
 _TS_FIELDS = (
@@ -20,8 +19,8 @@ _TS_FIELDS = (
 def rtdb_to_interaction(
     value: Any,
     *,
-    path: Optional[str] = None,
-    node_id: Optional[str] = None,
+    path: str | None = None,
+    node_id: str | None = None,
 ) -> Interaction:
     """
     Convert a RTDB node value into an Interaction.
@@ -46,7 +45,7 @@ def rtdb_to_interaction(
 
     return Interaction(
         id=str(_id),
-        ts=ts or None,
+        **({"ts": ts} if ts is not None else {}),
         type="rtdb",
         text=text_val,
         source=f"rtdb:{path}" if path else None,
@@ -55,10 +54,10 @@ def rtdb_to_interaction(
 
 
 def rtdb_batch_to_interactions(
-    snapshot: Union[Dict[str, Any], List[Any]],
+    snapshot: dict[str, Any] | list[Any],
     *,
-    base_path: Optional[str] = None,
-) -> List[Interaction]:
+    base_path: str | None = None,
+) -> list[Interaction]:
     """
     Convert a RTDB snapshot into a list of Interactions.
 
@@ -66,7 +65,7 @@ def rtdb_batch_to_interactions(
     - Lists are enumerated by index
     """
 
-    interactions: List[Interaction] = []
+    interactions: list[Interaction] = []
 
     if isinstance(snapshot, list):
         for idx, value in enumerate(snapshot):

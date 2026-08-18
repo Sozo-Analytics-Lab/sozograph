@@ -3,9 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, Optional
-
+from typing import Any
 
 # -----------------------------
 # Time helpers
@@ -15,7 +15,7 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def parse_ts(value: Any) -> Optional[datetime]:
+def parse_ts(value: Any) -> datetime | None:
     """
     Best-effort timestamp parsing.
     Supports:
@@ -83,6 +83,18 @@ def sha256_json(obj: Any) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def stable_id(prefix: str, payload: Any, *, length: int = 10) -> str:
+    """
+    Deterministic short identifier for a JSON-serializable payload.
+
+    Python's built-in hash() is salted per process (PYTHONHASHSEED), so IDs
+    derived from it differ between runs on identical input. SozoGraph promises
+    that the same inputs produce the same memory state, so every generated id
+    goes through here instead.
+    """
+    return f"{prefix}{sha256_json(payload)[:length]}"
+
+
 # -----------------------------
 # Safe stringify (for Interaction.text)
 # -----------------------------
@@ -137,7 +149,7 @@ def safe_stringify(
 # Field picking helpers
 # -----------------------------
 
-def pick_first(obj: Dict[str, Any], keys: Iterable[str]) -> Optional[Any]:
+def pick_first(obj: dict[str, Any], keys: Iterable[str]) -> Any | None:
     """
     Return the first non-empty value for the given keys.
     """
