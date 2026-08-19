@@ -15,7 +15,12 @@ _UNSUPPORTED = ("additionalProperties", "$schema", "strict", "definitions", "$de
 # Google's side, unrelated to anything the caller did. Both are worth waiting
 # out and retrying rather than letting the run die on the first one.
 _RETRYABLE_CODES = (429, 503)
-_MAX_RATE_LIMIT_RETRIES = 8
+# A single 429 with a ~60s suggested delay should almost always clear on the
+# next attempt; 8 retries turned out to be too few during a sustained
+# throttled stretch (a burst of prior calls keeping the rolling window full).
+# Correctness matters more than speed for an unattended multi-hour run, so
+# this affords up to ~30 minutes of waiting on one call before giving up.
+_MAX_RATE_LIMIT_RETRIES = 30
 _DEFAULT_RETRY_DELAY_SECONDS = 5.0
 _BACKOFF_BASE_SECONDS = 10.0
 _BACKOFF_MAX_SECONDS = 60.0

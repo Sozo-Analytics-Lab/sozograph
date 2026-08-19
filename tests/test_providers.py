@@ -258,9 +258,9 @@ def test_gemini_gives_up_after_max_rate_limit_retries(fake_gemini_flaky):
 
     with pytest.raises(Exception):
         p.complete_json(system="s", user="u", schema=SCHEMA)
-    # 1 initial attempt + 8 retries, per _MAX_RATE_LIMIT_RETRIES.
-    assert state["calls"] == 9
-    assert len(sleeps) == 8
+    # 1 initial attempt + 30 retries, per _MAX_RATE_LIMIT_RETRIES.
+    assert state["calls"] == 31
+    assert len(sleeps) == 30
 
 
 def test_gemini_retries_on_server_overload_then_succeeds(fake_gemini_flaky):
