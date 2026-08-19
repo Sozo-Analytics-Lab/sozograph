@@ -134,13 +134,26 @@ def main(argv: list[str] | None = None) -> int:
                             conversation, model=args.provider, provider_kwargs=provider_kwargs
                         )
 
-                    marks = [
-                        judge(judge_provider, question=a.question, gold=a.gold,
-                              prediction=a.prediction).correct
-                        for a in result.answers
-                    ]
-                    runs.append(result)
-                    verdicts.append(marks)
+                    # A judge-side failure (e.g. a rate limit that outlasts the
+                    # provider's own retries) must not discard the backbone
+                    # work for this conversation -- that work already happened
+                    # and already cost real, billed API calls. So this is a
+                    # real for-loop, not a list comprehension: whatever marks
+                    # exist when it raises are still recorded, against only
+                    # the answers that were actually judged.
+                    total_questions = len(result.answers)
+                    marks: list[bool] = []
+                    try:
+                        for a in result.answers:
+                            marks.append(judge(judge_provider, question=a.question,
+                                                gold=a.gold, prediction=a.prediction).correct)
+                    finally:
+                        judged = len(marks)
+                        if judged < total_questions:
+                            result.answers = result.answers[:judged]
+                            result.notes["judged_of_total"] = f"{judged}/{total_questions}"
+                        runs.append(result)
+                        verdicts.append(marks)
 
                     hits = sum(marks)
                     print(f"      {hits}/{len(marks)} correct, "

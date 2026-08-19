@@ -183,7 +183,9 @@ def test_partial_results_survive_a_mid_run_crash(tmp_path, monkeypatch, fake_pro
     # A quota-capped provider can die after several real, already-billed calls
     # succeeded. Losing that work on every crash defeats the point of running
     # in small daily batches, so whatever finished before the crash must land
-    # on disk, not just the exception.
+    # on disk, not just the exception -- including a conversation whose
+    # backbone (SozoGraph memory + QA) finished but whose judging only got
+    # partway through, which must not discard that backbone work either.
     from bench.locomo import run as run_mod
 
     data_path = _multi_conversation_file(tmp_path)
@@ -194,8 +196,9 @@ def test_partial_results_survive_a_mid_run_crash(tmp_path, monkeypatch, fake_pro
 
     def flaky_judge(provider, **kwargs):
         calls["n"] += 1
-        # conv-0 has 3 questions, all exact-match (no provider call needed);
-        # fail on conv-1's first question so conv-0 is the only completed one.
+        # conv-0 has 2 non-adversarial questions (both exact-match): calls 1-2.
+        # conv-1's first question is call 3 (succeeds); its second is call 4,
+        # which fails -- so conv-1 is only half-judged when the run dies.
         if calls["n"] > 3:
             raise RuntimeError("simulated quota exhaustion")
         return real_judge(provider, **kwargs)
@@ -216,9 +219,12 @@ def test_partial_results_survive_a_mid_run_crash(tmp_path, monkeypatch, fake_pro
     payload = json.loads(files[0].read_text(encoding="utf-8"))
 
     assert payload["config"]["note"].startswith("partial")
-    assert payload["metrics"][0]["conversations"] == 1
-    saved_ids = {r["sample_id"] for r in payload["per_conversation"]["sozograph"]}
-    assert saved_ids == {"conv-0"}
+    # Both conversations are recorded: conv-0 complete, conv-1 partial.
+    assert payload["metrics"][0]["conversations"] == 2
+    saved = {r["sample_id"]: r for r in payload["per_conversation"]["sozograph"]}
+    assert set(saved) == {"conv-0", "conv-1"}
+    assert saved["conv-0"]["notes"].get("judged_of_total") is None
+    assert saved["conv-1"]["notes"]["judged_of_total"] == "1/2"
 
 
 def test_base_url_reaches_the_provider_and_judge_separately(tmp_path, monkeypatch, data_file):
