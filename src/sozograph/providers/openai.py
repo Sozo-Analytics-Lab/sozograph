@@ -1,9 +1,38 @@
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 from .base import LLMProvider, loads_lenient, require
+
+# OpenAI-compatible gateways (Groq in particular) throttle on tokens-per-minute
+# as much as requests-per-minute, and hitting that under real load is routine,
+# not exceptional. Their 429 bodies say "try again in <n>ms" rather than
+# carrying a structured retry-after value, so that's what gets parsed.
+_RETRYABLE_STATUS_CODES = (429, 503)
+_MAX_RATE_LIMIT_RETRIES = 30
+_DEFAULT_RETRY_DELAY_SECONDS = 5.0
+_TRY_AGAIN_MS_RE = re.compile(r"try again in\s+([\d.]+)\s*ms", re.IGNORECASE)
+_TRY_AGAIN_S_RE = re.compile(r"try again in\s+([\d.]+)\s*s\b", re.IGNORECASE)
+
+
+def _retry_delay_seconds(exc: Exception) -> float:
+    response = getattr(exc, "response", None)
+    header = getattr(response, "headers", {}).get("retry-after") if response else None
+    if header:
+        try:
+            return float(header)
+        except ValueError:
+            pass
+
+    message = str(exc)
+    if m := _TRY_AGAIN_MS_RE.search(message):
+        return float(m.group(1)) / 1000.0
+    if m := _TRY_AGAIN_S_RE.search(message):
+        return float(m.group(1))
+    return _DEFAULT_RETRY_DELAY_SECONDS
 
 
 @dataclass
@@ -40,6 +69,18 @@ class OpenAIProvider(LLMProvider):
             getattr(u, "completion_tokens", 0) or 0,
         )
 
+    def _create(self, **kwargs):
+        attempt = 0
+        while True:
+            try:
+                return self._client().chat.completions.create(**kwargs)
+            except Exception as exc:
+                code = getattr(exc, "status_code", None)
+                if code not in _RETRYABLE_STATUS_CODES or attempt >= _MAX_RATE_LIMIT_RETRIES:
+                    raise
+                time.sleep(_retry_delay_seconds(exc))
+                attempt += 1
+
     def complete_json(self, *, system, user, schema, temperature=0.2) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": system},
@@ -59,7 +100,7 @@ class OpenAIProvider(LLMProvider):
             },
         }
         try:
-            resp = self._client().chat.completions.create(**kwargs)
+            resp = self._create(**kwargs)
         except Exception as exc:
             # Gateways and reasoning models vary in what they accept. Degrade to
             # plain JSON mode rather than failing the whole ingestion.
@@ -67,14 +108,14 @@ class OpenAIProvider(LLMProvider):
             if "response_format" in msg or "json_schema" in msg or "temperature" in msg:
                 kwargs["response_format"] = {"type": "json_object"}
                 kwargs.pop("temperature", None)
-                resp = self._client().chat.completions.create(**kwargs)
+                resp = self._create(**kwargs)
             else:
                 raise
         self._record(resp)
         return loads_lenient(resp.choices[0].message.content)
 
     def complete_text(self, *, system, user, temperature=0.2) -> str:
-        resp = self._client().chat.completions.create(
+        resp = self._create(
             model=self.model,
             messages=[
                 {"role": "system", "content": system},

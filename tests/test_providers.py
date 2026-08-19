@@ -130,6 +130,70 @@ def test_openai_base_url_reaches_the_client(fake_openai, captured):
     assert captured["client_kwargs"]["base_url"] == "http://localhost:8000/v1"
 
 
+def _openai_rate_limit_error(status_code: int = 429, retry_after_ms: float = 10.0) -> Exception:
+    # Groq's actual 429 body: no structured retry-after, just prose like this.
+    exc = Exception(
+        f"Error code: {status_code} - rate limit reached. "
+        f"Please try again in {retry_after_ms}ms."
+    )
+    exc.status_code = status_code
+    return exc
+
+
+@pytest.fixture
+def fake_openai_flaky(monkeypatch, captured):
+    """Like fake_openai, but create() fails a fixed number of times first."""
+
+    def _install(*, failures: int, status_code: int = 429):
+        state = {"calls": 0}
+
+        class Completions:
+            def create(self, **kw):
+                state["calls"] += 1
+                if state["calls"] <= failures:
+                    raise _openai_rate_limit_error(status_code)
+                captured.update(kw)
+                msg = types.SimpleNamespace(content=json.dumps(PAYLOAD))
+                return types.SimpleNamespace(
+                    choices=[types.SimpleNamespace(message=msg)],
+                    usage=types.SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+                )
+
+        class OpenAI:
+            def __init__(self, **kw):
+                self.chat = types.SimpleNamespace(completions=Completions())
+
+        monkeypatch.setitem(sys.modules, "openai", _module("openai", OpenAI=OpenAI))
+
+        sleeps: list[float] = []
+        monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+        return state, sleeps
+
+    return _install
+
+
+def test_openai_retries_on_rate_limit_then_succeeds(fake_openai_flaky):
+    # Groq's TPM cap is hit under routine load, not just abuse; a 429 there
+    # must be waited out and retried, not treated as a hard failure.
+    state, sleeps = fake_openai_flaky(failures=2)
+    p = get_provider("openai:x", api_key="k", base_url="http://localhost:8000/v1")
+
+    assert p.complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
+    assert state["calls"] == 3
+    assert sleeps == [0.01, 0.01]
+
+
+def test_openai_gives_up_after_max_rate_limit_retries(fake_openai_flaky):
+    state, sleeps = fake_openai_flaky(failures=999)
+    p = get_provider("openai:x", api_key="k", base_url="http://localhost:8000/v1")
+
+    with pytest.raises(Exception):
+        p.complete_json(system="s", user="u", schema=SCHEMA)
+    # 1 initial attempt + 30 retries, per _MAX_RATE_LIMIT_RETRIES.
+    assert state["calls"] == 31
+    assert len(sleeps) == 30
+
+
 # --------------------------------------------------------------------------
 # Gemini: system_instruction + native response_schema
 # --------------------------------------------------------------------------
