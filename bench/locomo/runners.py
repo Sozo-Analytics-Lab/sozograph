@@ -86,10 +86,12 @@ def _ask(provider: LLMProvider, context: str, question: str) -> str:
     return str(payload.get("answer") or "").strip()
 
 
-def run_full_context(conversation: Conversation, *, model: str) -> RunResult:
+def run_full_context(
+    conversation: Conversation, *, model: str, provider_kwargs: dict[str, Any] | None = None
+) -> RunResult:
     """Baseline: the entire conversation in every prompt."""
     result = RunResult(system="full_context", sample_id=conversation.sample_id)
-    provider = get_provider(model)
+    provider = get_provider(model, **(provider_kwargs or {}))
     context = "CONVERSATION:\n" + conversation.as_text()
 
     started = time.perf_counter()
@@ -110,14 +112,15 @@ def run_sozograph(
     budget_chars: int = 6000,
     max_segment_tokens: int = 1500,
     compact_after: bool = False,
+    provider_kwargs: dict[str, Any] | None = None,
 ) -> RunResult:
     """Build a passport once, then answer from a query-selected slice."""
     result = RunResult(system="sozograph", sample_id=conversation.sample_id)
 
     # Separate providers so memory-construction tokens and question-answering
     # tokens are never conflated. LightMem's table splits them; so does this.
-    memory_provider = get_provider(model)
-    qa_provider = get_provider(model)
+    memory_provider = get_provider(model, **(provider_kwargs or {}))
+    qa_provider = get_provider(model, **(provider_kwargs or {}))
 
     started = time.perf_counter()
     graph = SozoGraph(provider=memory_provider)

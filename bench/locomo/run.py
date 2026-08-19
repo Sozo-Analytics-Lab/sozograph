@@ -33,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
                         help="Backbone, as provider[:model]")
     parser.add_argument("--judge", default="openai:gpt-4o-mini",
                         help="Judge, as provider[:model]")
+    parser.add_argument("--base-url", default=None,
+                        help="base_url override for --provider "
+                             "(e.g. Groq/Together/vLLM via provider=openai)")
+    parser.add_argument("--judge-base-url", default=None,
+                        help="base_url override for --judge")
     parser.add_argument("--systems", default="sozograph",
                         help="Comma-separated: sozograph, full_context")
     parser.add_argument("--limit", type=int, default=None,
@@ -77,13 +82,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Unknown system(s): {unknown}. Choose from {list(RUNNERS)}", file=sys.stderr)
         return 2
 
-    judge_provider = get_provider(args.judge)
+    provider_kwargs = {"base_url": args.base_url} if args.base_url else {}
+    judge_kwargs = {"base_url": args.judge_base_url} if args.judge_base_url else {}
+
+    judge_provider = get_provider(args.judge, **judge_kwargs)
     results, all_metrics = {}, []
 
     def _save_now(*, note: str | None = None):
         config = {
             "provider": args.provider,
+            "base_url": args.base_url,
             "judge": args.judge,
+            "judge_base_url": args.judge_base_url,
             "categories": list(categories),
             "budget_chars": args.budget_chars,
             "segment_tokens": args.segment_tokens,
@@ -117,9 +127,12 @@ def main(argv: list[str] | None = None) -> int:
                             budget_chars=args.budget_chars,
                             max_segment_tokens=args.segment_tokens,
                             compact_after=args.compact,
+                            provider_kwargs=provider_kwargs,
                         )
                     else:
-                        result = runner(conversation, model=args.provider)
+                        result = runner(
+                            conversation, model=args.provider, provider_kwargs=provider_kwargs
+                        )
 
                     marks = [
                         judge(judge_provider, question=a.question, gold=a.gold,

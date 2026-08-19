@@ -221,6 +221,37 @@ def test_partial_results_survive_a_mid_run_crash(tmp_path, monkeypatch, fake_pro
     assert saved_ids == {"conv-0"}
 
 
+def test_base_url_reaches_the_provider_and_judge_separately(tmp_path, monkeypatch, data_file):
+    # openai-compatible gateways (Groq, Together, vLLM...) are reached by
+    # pointing the existing openai provider at a base_url; --provider and
+    # --judge can be different gateways, so each needs its own override.
+    from bench.locomo import run as run_mod
+
+    seen: list[tuple[str, dict]] = []
+
+    def factory(spec, **kwargs):
+        seen.append((spec, kwargs))
+        return BenchProvider(model=str(spec))
+
+    monkeypatch.setattr(runners_mod, "get_provider", factory)
+    monkeypatch.setattr(run_mod, "get_provider", factory)
+
+    run_mod.main([
+        "--data", str(data_file),
+        "--systems", "sozograph",
+        "--provider", "openai:llama-model",
+        "--base-url", "https://api.groq.com/openai/v1",
+        "--judge", "openai:judge-model",
+        "--judge-base-url", "https://example-judge-gateway.test/v1",
+        "--out", str(tmp_path / "results"),
+    ])
+
+    provider_calls = {spec: kwargs for spec, kwargs in seen if spec == "openai:llama-model"}
+    judge_calls = {spec: kwargs for spec, kwargs in seen if spec == "openai:judge-model"}
+    assert provider_calls["openai:llama-model"]["base_url"] == "https://api.groq.com/openai/v1"
+    assert judge_calls["openai:judge-model"]["base_url"] == "https://example-judge-gateway.test/v1"
+
+
 def test_describe_summarizes_the_dataset(data_file):
     summary = describe(load_conversations(data_file))
     assert summary["conversations"] == 1
