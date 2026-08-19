@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Comma-separated: sozograph, full_context")
     parser.add_argument("--limit", type=int, default=None,
                         help="Only the first N conversations")
+    parser.add_argument("--offset", type=int, default=0,
+                        help="Skip the first N conversations (for daily quota-split batches)")
     parser.add_argument("--budget-chars", type=int, default=6000,
                         help="Context budget per question")
     parser.add_argument("--segment-tokens", type=int, default=1500,
@@ -53,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     categories = tuple(int(c) for c in args.categories.split(",") if c.strip())
     try:
         conversations = load_conversations(
-            args.data, categories=categories, limit=args.limit
+            args.data, categories=categories, limit=args.limit, offset=args.offset
         )
     except FileNotFoundError as exc:
         print(exc, file=sys.stderr)
@@ -125,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         "budget_chars": args.budget_chars,
         "segment_tokens": args.segment_tokens,
         "compact": args.compact,
+        "offset": args.offset,
         "conversations": len(conversations),
         "judge_usage": judge_provider.usage.to_dict(),
     }

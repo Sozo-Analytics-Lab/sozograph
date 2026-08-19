@@ -109,8 +109,15 @@ def load_conversations(
     *,
     categories: tuple[int, ...] = DEFAULT_CATEGORIES,
     limit: int | None = None,
+    offset: int = 0,
 ) -> list[Conversation]:
-    """Parse locomo10.json into flat turn lists and QA pairs."""
+    """
+    Parse locomo10.json into flat turn lists and QA pairs.
+
+    `offset` skips the first N valid conversations before `limit` applies, so
+    a quota-constrained run can be split into daily batches (e.g. offset=0
+    limit=3, then offset=3 limit=3, ...) without reprocessing what already ran.
+    """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
@@ -124,6 +131,7 @@ def load_conversations(
         raw = [raw]
 
     conversations: list[Conversation] = []
+    skipped = 0
     for index, sample in enumerate(raw):
         conv = sample.get("conversation") or {}
         speakers = [s for s in (conv.get("speaker_a"), conv.get("speaker_b")) if s]
@@ -174,6 +182,9 @@ def load_conversations(
             )
 
         if turns and questions:
+            if skipped < offset:
+                skipped += 1
+                continue
             conversations.append(
                 Conversation(
                     sample_id=str(sample.get("sample_id") or f"conv_{index}"),

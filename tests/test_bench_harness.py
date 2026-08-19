@@ -156,6 +156,29 @@ def test_missing_dataset_explains_where_to_get_it(tmp_path):
     assert "snap-research/locomo" in str(exc.value)
 
 
+def _multi_conversation_file(tmp_path):
+    samples = []
+    for i in range(3):
+        sample = json.loads(json.dumps(SAMPLE[0]))  # deep copy
+        sample["sample_id"] = f"conv-{i}"
+        samples.append(sample)
+    path = tmp_path / "multi.json"
+    path.write_text(json.dumps(samples), encoding="utf-8")
+    return path
+
+
+def test_offset_skips_leading_conversations_for_daily_quota_batches(tmp_path):
+    path = _multi_conversation_file(tmp_path)
+    all_convs = load_conversations(path)
+    assert [c.sample_id for c in all_convs] == ["conv-0", "conv-1", "conv-2"]
+
+    batch = load_conversations(path, offset=1, limit=1)
+    assert [c.sample_id for c in batch] == ["conv-1"]
+
+    tail = load_conversations(path, offset=2)
+    assert [c.sample_id for c in tail] == ["conv-2"]
+
+
 def test_describe_summarizes_the_dataset(data_file):
     summary = describe(load_conversations(data_file))
     assert summary["conversations"] == 1
