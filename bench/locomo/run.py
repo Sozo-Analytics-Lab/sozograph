@@ -80,58 +80,74 @@ def main(argv: list[str] | None = None) -> int:
     judge_provider = get_provider(args.judge)
     results, all_metrics = {}, []
 
-    for system in systems:
-        print(f"Running {system} on {len(conversations)} conversation(s) "
-              f"with {args.provider}")
-        runner = RUNNERS[system]
-        runs, verdicts = [], []
+    def _save_now(*, note: str | None = None):
+        config = {
+            "provider": args.provider,
+            "judge": args.judge,
+            "categories": list(categories),
+            "budget_chars": args.budget_chars,
+            "segment_tokens": args.segment_tokens,
+            "compact": args.compact,
+            "offset": args.offset,
+            "conversations": len(conversations),
+            "judge_usage": judge_provider.usage.to_dict(),
+        }
+        if note:
+            config["note"] = note
+        return save(all_metrics, results, args.out, config=config)
 
-        for index, conversation in enumerate(conversations, start=1):
-            _progress(f"{conversation.sample_id} "
-                      f"({len(conversation.turns)} turns, {len(conversation.qa)} questions)",
-                      index, len(conversations))
-            if system == "sozograph":
-                result = runner(
-                    conversation,
-                    model=args.provider,
-                    budget_chars=args.budget_chars,
-                    max_segment_tokens=args.segment_tokens,
-                    compact_after=args.compact,
-                )
-            else:
-                result = runner(conversation, model=args.provider)
+    # A quota-constrained provider (a free-tier daily cap, say) can die mid-run
+    # after real, already-paid-for API calls. Losing that work on every crash
+    # is worse than the crash itself, so whatever finished is saved either way.
+    try:
+        for system in systems:
+            print(f"Running {system} on {len(conversations)} conversation(s) "
+                  f"with {args.provider}")
+            runner = RUNNERS[system]
+            runs, verdicts = [], []
+            try:
+                for index, conversation in enumerate(conversations, start=1):
+                    _progress(f"{conversation.sample_id} "
+                              f"({len(conversation.turns)} turns, {len(conversation.qa)} questions)",
+                              index, len(conversations))
+                    if system == "sozograph":
+                        result = runner(
+                            conversation,
+                            model=args.provider,
+                            budget_chars=args.budget_chars,
+                            max_segment_tokens=args.segment_tokens,
+                            compact_after=args.compact,
+                        )
+                    else:
+                        result = runner(conversation, model=args.provider)
 
-            marks = [
-                judge(judge_provider, question=a.question, gold=a.gold,
-                      prediction=a.prediction).correct
-                for a in result.answers
-            ]
-            runs.append(result)
-            verdicts.append(marks)
+                    marks = [
+                        judge(judge_provider, question=a.question, gold=a.gold,
+                              prediction=a.prediction).correct
+                        for a in result.answers
+                    ]
+                    runs.append(result)
+                    verdicts.append(marks)
 
-            hits = sum(marks)
-            print(f"      {hits}/{len(marks)} correct, "
-                  f"{result.total_tokens:,} tokens, {result.total_calls} calls")
-
-        results[system] = runs
-        all_metrics.append(aggregate(system, runs, verdicts))
+                    hits = sum(marks)
+                    print(f"      {hits}/{len(marks)} correct, "
+                          f"{result.total_tokens:,} tokens, {result.total_calls} calls")
+            finally:
+                if runs:
+                    results[system] = runs
+                    all_metrics.append(aggregate(system, runs, verdicts))
+    except Exception:
+        path = _save_now(note="partial: run raised before completing; see stderr for the cause")
+        done = sum(len(r) for r in results.values())
+        print(f"\nCrashed partway through -- {done} system-conversation run(s) "
+              f"already completed were saved to {path}", file=sys.stderr)
+        raise
 
     print()
     print(render_table(all_metrics))
     print()
 
-    config = {
-        "provider": args.provider,
-        "judge": args.judge,
-        "categories": list(categories),
-        "budget_chars": args.budget_chars,
-        "segment_tokens": args.segment_tokens,
-        "compact": args.compact,
-        "offset": args.offset,
-        "conversations": len(conversations),
-        "judge_usage": judge_provider.usage.to_dict(),
-    }
-    path = save(all_metrics, results, args.out, config=config)
+    path = _save_now()
     print(f"Results written to {path}")
 
     for metrics in all_metrics:

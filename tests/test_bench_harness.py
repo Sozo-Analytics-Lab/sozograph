@@ -179,6 +179,48 @@ def test_offset_skips_leading_conversations_for_daily_quota_batches(tmp_path):
     assert [c.sample_id for c in tail] == ["conv-2"]
 
 
+def test_partial_results_survive_a_mid_run_crash(tmp_path, monkeypatch, fake_providers):
+    # A quota-capped provider can die after several real, already-billed calls
+    # succeeded. Losing that work on every crash defeats the point of running
+    # in small daily batches, so whatever finished before the crash must land
+    # on disk, not just the exception.
+    from bench.locomo import run as run_mod
+
+    data_path = _multi_conversation_file(tmp_path)
+    out_dir = tmp_path / "results"
+
+    real_judge = run_mod.judge
+    calls = {"n": 0}
+
+    def flaky_judge(provider, **kwargs):
+        calls["n"] += 1
+        # conv-0 has 3 questions, all exact-match (no provider call needed);
+        # fail on conv-1's first question so conv-0 is the only completed one.
+        if calls["n"] > 3:
+            raise RuntimeError("simulated quota exhaustion")
+        return real_judge(provider, **kwargs)
+
+    monkeypatch.setattr(run_mod, "judge", flaky_judge)
+    monkeypatch.setattr(run_mod, "get_provider", lambda spec, **kw: BenchProvider(model=str(spec)))
+
+    with pytest.raises(RuntimeError, match="simulated quota exhaustion"):
+        run_mod.main([
+            "--data", str(data_path),
+            "--provider", "bench:fake",
+            "--judge", "bench:fake",
+            "--out", str(out_dir),
+        ])
+
+    files = list(out_dir.glob("locomo_*.json"))
+    assert len(files) == 1, "the crash must still leave exactly one results file"
+    payload = json.loads(files[0].read_text(encoding="utf-8"))
+
+    assert payload["config"]["note"].startswith("partial")
+    assert payload["metrics"][0]["conversations"] == 1
+    saved_ids = {r["sample_id"] for r in payload["per_conversation"]["sozograph"]}
+    assert saved_ids == {"conv-0"}
+
+
 def test_describe_summarizes_the_dataset(data_file):
     summary = describe(load_conversations(data_file))
     assert summary["conversations"] == 1
