@@ -141,6 +141,19 @@ def test_openai_base_url_reaches_the_client(fake_openai, captured):
     assert captured["client_kwargs"]["base_url"] == "http://localhost:8000/v1"
 
 
+def test_openai_disables_the_sdks_own_retries(fake_openai, captured):
+    # The SDK's built-in retry-on-timeout is a second, opaque retry layer
+    # underneath _create()'s own loop: each of our attempts could silently
+    # become 1 + max_retries real network attempts, multiplying worst-case
+    # wait time with nothing in the logs to show why. A live run against
+    # NVIDIA NIM took 4+ hours to give up on a single stuck call from this
+    # exact compounding. _create() is the only retry layer that should exist.
+    get_provider("openai:x", api_key="k", max_retries=5).complete_json(
+        system="s", user="u", schema=SCHEMA
+    )
+    assert captured["client_kwargs"]["max_retries"] == 0
+
+
 def test_openai_degrades_to_json_object_on_schema_incompatible_models(monkeypatch, captured):
     # Some models (qwen3.6 on Groq, observed live) emit an empty completion
     # under strict json_schema mode; the gateway then rejects it itself with

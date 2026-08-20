@@ -56,7 +56,15 @@ class OpenAIProvider(LLMProvider):
             kwargs: dict[str, Any] = {
                 "api_key": self.api_key,
                 "timeout": self.timeout,
-                "max_retries": self.max_retries,
+                # The SDK's own retry-on-timeout/5xx is a second, opaque retry
+                # layer stacked underneath _create()'s -- each of our attempts
+                # could silently become 1 + self.max_retries real network
+                # attempts, multiplying worst-case wait time with no logging
+                # to show it. A live run against NVIDIA NIM took over 4 hours
+                # to give up on a single stuck call because of exactly this.
+                # _create() already retries with server-suggested delays, so
+                # the SDK layer is pure redundancy here.
+                "max_retries": 0,
             }
             if self.base_url:
                 kwargs["base_url"] = self.base_url
