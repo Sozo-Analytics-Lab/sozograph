@@ -247,8 +247,10 @@ def test_base_url_reaches_the_provider_and_judge_separately(tmp_path, monkeypatc
         "--systems", "sozograph",
         "--provider", "openai:llama-model",
         "--base-url", "https://api.groq.com/openai/v1",
+        "--api-key", "groq-secret-123",
         "--judge", "openai:judge-model",
         "--judge-base-url", "https://example-judge-gateway.test/v1",
+        "--judge-api-key", "nvidia-secret-456",
         "--out", str(tmp_path / "results"),
     ])
 
@@ -256,6 +258,32 @@ def test_base_url_reaches_the_provider_and_judge_separately(tmp_path, monkeypatc
     judge_calls = {spec: kwargs for spec, kwargs in seen if spec == "openai:judge-model"}
     assert provider_calls["openai:llama-model"]["base_url"] == "https://api.groq.com/openai/v1"
     assert judge_calls["openai:judge-model"]["base_url"] == "https://example-judge-gateway.test/v1"
+    # Two different openai-compatible gateways need two different keys --
+    # both would otherwise read the same OPENAI_API_KEY and collide.
+    assert provider_calls["openai:llama-model"]["api_key"] == "groq-secret-123"
+    assert judge_calls["openai:judge-model"]["api_key"] == "nvidia-secret-456"
+
+
+def test_api_keys_never_land_in_the_saved_results_file(tmp_path, monkeypatch, data_file):
+    from bench.locomo import run as run_mod
+
+    monkeypatch.setattr(runners_mod, "get_provider", lambda spec, **kw: BenchProvider(model=str(spec)))
+    monkeypatch.setattr(run_mod, "get_provider", lambda spec, **kw: BenchProvider(model=str(spec)))
+
+    out_dir = tmp_path / "results"
+    run_mod.main([
+        "--data", str(data_file),
+        "--systems", "sozograph",
+        "--provider", "openai:llama-model",
+        "--api-key", "groq-secret-123",
+        "--judge", "openai:judge-model",
+        "--judge-api-key", "nvidia-secret-456",
+        "--out", str(out_dir),
+    ])
+
+    raw = next(out_dir.glob("locomo_*.json")).read_text(encoding="utf-8")
+    assert "groq-secret-123" not in raw
+    assert "nvidia-secret-456" not in raw
 
 
 def test_describe_summarizes_the_dataset(data_file):

@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
                              "(e.g. Groq/Together/vLLM via provider=openai)")
     parser.add_argument("--judge-base-url", default=None,
                         help="base_url override for --judge")
+    parser.add_argument("--api-key", default=None,
+                        help="API key for --provider (needed when --provider and --judge "
+                             "are different openai-compatible gateways with different keys, "
+                             "since both would otherwise read the same OPENAI_API_KEY)")
+    parser.add_argument("--judge-api-key", default=None,
+                        help="API key for --judge")
     parser.add_argument("--systems", default="sozograph",
                         help="Comma-separated: sozograph, full_context")
     parser.add_argument("--limit", type=int, default=None,
@@ -83,7 +89,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     provider_kwargs = {"base_url": args.base_url} if args.base_url else {}
+    if args.api_key:
+        provider_kwargs["api_key"] = args.api_key
     judge_kwargs = {"base_url": args.judge_base_url} if args.judge_base_url else {}
+    if args.judge_api_key:
+        judge_kwargs["api_key"] = args.judge_api_key
 
     judge_provider = get_provider(args.judge, **judge_kwargs)
     results, all_metrics = {}, []
