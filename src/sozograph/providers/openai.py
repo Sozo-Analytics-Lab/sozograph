@@ -71,10 +71,20 @@ class OpenAIProvider(LLMProvider):
         )
 
     def _create(self, **kwargs):
+        openai_sdk = require("openai", "openai")
         attempt = 0
         while True:
             try:
                 return self._client().chat.completions.create(**kwargs)
+            except openai_sdk.APIConnectionError as exc:
+                # Timeouts and other connection failures (a slow or briefly
+                # unreachable gateway -- observed live against NVIDIA NIM's
+                # free tier) carry no status_code at all, unlike a 429, but
+                # are exactly as transient and worth waiting out.
+                if attempt >= _MAX_RATE_LIMIT_RETRIES:
+                    raise
+                time.sleep(_retry_delay_seconds(exc))
+                attempt += 1
             except Exception as exc:
                 code = getattr(exc, "status_code", None)
                 if code not in _RETRYABLE_STATUS_CODES or attempt >= _MAX_RATE_LIMIT_RETRIES:

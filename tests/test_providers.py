@@ -33,6 +33,13 @@ def _module(name: str, **attrs) -> types.ModuleType:
     return mod
 
 
+class _FakeAPIConnectionError(Exception):
+    """Stand-in for openai.APIConnectionError. Every fake `openai` module
+    needs one since OpenAIProvider._create() references it directly; none of
+    the rate-limit fakes below ever raise this specific class, so it's a safe
+    default that doesn't cross-contaminate the status-code retry tests."""
+
+
 @pytest.fixture
 def captured() -> dict[str, Any]:
     return {}
@@ -108,7 +115,11 @@ def fake_openai(monkeypatch, captured):
             captured["client_kwargs"] = kw
             self.chat = types.SimpleNamespace(completions=Completions())
 
-    monkeypatch.setitem(sys.modules, "openai", _module("openai", OpenAI=OpenAI))
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        _module("openai", OpenAI=OpenAI, APIConnectionError=_FakeAPIConnectionError),
+    )
 
 
 def test_openai_uses_strict_json_schema(fake_openai, captured):
@@ -160,7 +171,11 @@ def test_openai_degrades_to_json_object_on_schema_incompatible_models(monkeypatc
         def __init__(self, **kw):
             self.chat = types.SimpleNamespace(completions=Completions())
 
-    monkeypatch.setitem(sys.modules, "openai", _module("openai", OpenAI=OpenAI))
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        _module("openai", OpenAI=OpenAI, APIConnectionError=_FakeAPIConnectionError),
+    )
 
     p = get_provider("openai:qwen/qwen3.6-27b", api_key="k")
     assert p.complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
@@ -208,7 +223,11 @@ def fake_openai_flaky(monkeypatch, captured):
             def __init__(self, **kw):
                 self.chat = types.SimpleNamespace(completions=Completions())
 
-        monkeypatch.setitem(sys.modules, "openai", _module("openai", OpenAI=OpenAI))
+        monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        _module("openai", OpenAI=OpenAI, APIConnectionError=_FakeAPIConnectionError),
+    )
 
         sleeps: list[float] = []
         monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
@@ -237,6 +256,42 @@ def test_openai_gives_up_after_max_rate_limit_retries(fake_openai_flaky):
     # 1 initial attempt + 30 retries, per _MAX_RATE_LIMIT_RETRIES.
     assert state["calls"] == 31
     assert len(sleeps) == 30
+
+
+def test_openai_retries_on_connection_timeout_then_succeeds(monkeypatch, captured):
+    # A read timeout (observed live against NVIDIA NIM's free tier) carries no
+    # status_code at all -- it's an APIConnectionError, not an APIStatusError
+    # -- so it needs its own except clause, not just the 429/503 status check.
+    state = {"calls": 0}
+
+    class Completions:
+        def create(self, **kw):
+            state["calls"] += 1
+            if state["calls"] <= 2:
+                raise _FakeAPIConnectionError("Request timed out.")
+            captured.update(kw)
+            msg = types.SimpleNamespace(content=json.dumps(PAYLOAD))
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message=msg)],
+                usage=types.SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+            )
+
+    class OpenAI:
+        def __init__(self, **kw):
+            self.chat = types.SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(
+        sys.modules,
+        "openai",
+        _module("openai", OpenAI=OpenAI, APIConnectionError=_FakeAPIConnectionError),
+    )
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+    p = get_provider("openai:x", api_key="k", base_url="http://localhost:8000/v1")
+    assert p.complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
+    assert state["calls"] == 3
+    assert sleeps == [5.0, 5.0]
 
 
 # --------------------------------------------------------------------------
