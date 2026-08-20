@@ -102,10 +102,15 @@ class OpenAIProvider(LLMProvider):
         try:
             resp = self._create(**kwargs)
         except Exception as exc:
-            # Gateways and reasoning models vary in what they accept. Degrade to
-            # plain JSON mode rather than failing the whole ingestion.
+            # Gateways and reasoning models vary in what they accept -- and in
+            # how reliably they honor strict mode at all. Groq's gpt-oss holds
+            # to it; qwen3.6 on the same gateway sometimes emits an empty
+            # completion under it, which Groq itself then rejects as invalid
+            # JSON (code "json_validate_failed", no "json_schema" substring in
+            # sight). Degrade to plain JSON mode rather than failing the whole
+            # ingestion on either kind of complaint.
             msg = str(exc).lower()
-            if "response_format" in msg or "json_schema" in msg or "temperature" in msg:
+            if "response_format" in msg or "json" in msg or "temperature" in msg:
                 kwargs["response_format"] = {"type": "json_object"}
                 kwargs.pop("temperature", None)
                 resp = self._create(**kwargs)

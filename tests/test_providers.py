@@ -130,6 +130,45 @@ def test_openai_base_url_reaches_the_client(fake_openai, captured):
     assert captured["client_kwargs"]["base_url"] == "http://localhost:8000/v1"
 
 
+def test_openai_degrades_to_json_object_on_schema_incompatible_models(monkeypatch, captured):
+    # Some models (qwen3.6 on Groq, observed live) emit an empty completion
+    # under strict json_schema mode; the gateway then rejects it itself with
+    # code "json_validate_failed" -- no "json_schema" substring anywhere in
+    # that message, so the degrade path has to key on "json" generally.
+    calls: list[dict] = []
+
+    class Completions:
+        def create(self, **kw):
+            calls.append(kw)
+            if kw["response_format"]["type"] == "json_schema":
+                exc = Exception(
+                    "Error code: 400 - {'error': {'message': \"Failed to validate JSON. "
+                    "Please adjust your prompt. See 'failed_generation' for more details.\", "
+                    "'type': 'invalid_request_error', 'code': 'json_validate_failed', "
+                    "'failed_generation': ''}}"
+                )
+                exc.status_code = 400
+                raise exc
+            captured.update(kw)
+            msg = types.SimpleNamespace(content=json.dumps(PAYLOAD))
+            return types.SimpleNamespace(
+                choices=[types.SimpleNamespace(message=msg)],
+                usage=types.SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+            )
+
+    class OpenAI:
+        def __init__(self, **kw):
+            self.chat = types.SimpleNamespace(completions=Completions())
+
+    monkeypatch.setitem(sys.modules, "openai", _module("openai", OpenAI=OpenAI))
+
+    p = get_provider("openai:qwen/qwen3.6-27b", api_key="k")
+    assert p.complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
+    assert len(calls) == 2
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert "temperature" not in calls[1]
+
+
 def _openai_rate_limit_error(status_code: int = 429, retry_after_ms: float = 10.0) -> Exception:
     # Groq's actual 429 body: no structured retry-after, just prose like this.
     exc = Exception(
