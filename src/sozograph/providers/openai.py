@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass
@@ -113,6 +114,22 @@ class OpenAIProvider(LLMProvider):
             if "response_format" in msg or "json" in msg or "temperature" in msg:
                 kwargs["response_format"] = {"type": "json_object"}
                 kwargs.pop("temperature", None)
+                # json_object mode has no schema enforcement at all -- and the
+                # API itself (OpenAI's rule, inherited by Groq and others)
+                # rejects the request outright unless some message literally
+                # contains the word "json". SozoGraph's own prompts never do,
+                # so both are handled here rather than upstream in every
+                # prompt that might end up on this fallback path.
+                kwargs["messages"] = [
+                    messages[0],
+                    {
+                        "role": "user",
+                        "content": (
+                            f"{user}\n\nRespond with a single JSON object matching this "
+                            f"schema, no markdown fences, no commentary:\n{json.dumps(schema)}"
+                        ),
+                    },
+                ]
                 resp = self._create(**kwargs)
             else:
                 raise

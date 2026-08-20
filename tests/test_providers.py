@@ -167,6 +167,12 @@ def test_openai_degrades_to_json_object_on_schema_incompatible_models(monkeypatc
     assert len(calls) == 2
     assert calls[1]["response_format"] == {"type": "json_object"}
     assert "temperature" not in calls[1]
+    # OpenAI's own API (and every gateway that copies the rule, Groq included)
+    # rejects a json_object request outright unless some message literally
+    # says "json" -- neither of SozoGraph's own prompts do, so the fallback
+    # must inject it rather than assume the caller's prompt already has it.
+    fallback_messages = calls[1]["messages"]
+    assert "json" in fallback_messages[-1]["content"].lower()
 
 
 def _openai_rate_limit_error(status_code: int = 429, retry_after_ms: float = 10.0) -> Exception:
