@@ -142,7 +142,8 @@ def render_table(all_metrics: list[Metrics], *, include_published: bool = True) 
 
 
 def save(all_metrics: list[Metrics], results: dict[str, list[RunResult]],
-         out_dir: str | Path, *, config: dict[str, Any]) -> Path:
+         out_dir: str | Path, *, config: dict[str, Any],
+         verdicts: dict[str, list[list[Any]]] | None = None) -> Path:
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -169,5 +170,32 @@ def save(all_metrics: list[Metrics], results: dict[str, list[RunResult]],
             for system, runs in results.items()
         },
     }
+
+    # Aggregate accuracy alone cannot show which questions failed or why --
+    # the judge's own "reason" was being computed and then thrown away. This
+    # is what a per-item error analysis (retrieval miss vs. generation miss
+    # vs. a bad judge call) actually needs.
+    if verdicts:
+        payload["qa_log"] = {
+            system: [
+                {
+                    "sample_id": r.sample_id,
+                    "answers": [
+                        {
+                            "question": a.question,
+                            "gold": a.gold,
+                            "prediction": a.prediction,
+                            "category": CATEGORY_NAMES.get(a.category, f"category_{a.category}"),
+                            "correct": v.correct,
+                            "reason": v.reason,
+                        }
+                        for a, v in zip(r.answers, vs, strict=True)
+                    ],
+                }
+                for r, vs in zip(runs, verdicts.get(system, []), strict=False)
+            ]
+            for system, runs in results.items()
+        }
+
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path

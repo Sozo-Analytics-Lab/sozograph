@@ -448,6 +448,42 @@ def test_metrics_aggregate_and_render(data_file, fake_providers, tmp_path):
     assert "published_reference" in payload
 
 
+def test_saved_results_include_per_question_qa_log(data_file, fake_providers, tmp_path):
+    # Accuracy alone can't show which questions failed or why -- the judge's
+    # own "reason" was being computed and then discarded. This is what a
+    # real error analysis (retrieval miss vs. generation miss vs. a bad
+    # judge call) needs instead of just an aggregate percentage.
+    from bench.locomo.judge import Verdict
+
+    conv = load_conversations(data_file)[0]
+    result = run_sozograph(conv, model="fake")
+    verdicts = [Verdict(True, "exact match"), Verdict(False, "wrong city")]
+
+    metrics = aggregate("sozograph", [result], [[v.correct for v in verdicts]])
+    path = save(
+        [metrics], {"sozograph": [result]}, tmp_path,
+        config={"provider": "fake"}, verdicts={"sozograph": [verdicts]},
+    )
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    log = payload["qa_log"]["sozograph"][0]["answers"]
+    assert len(log) == 2
+    assert log[0]["question"] == result.answers[0].question
+    assert log[0]["correct"] is True and log[0]["reason"] == "exact match"
+    assert log[1]["correct"] is False and log[1]["reason"] == "wrong city"
+    assert log[0]["category"] in CATEGORY_NAMES.values()
+
+
+def test_saved_results_omit_qa_log_when_no_verdicts_given(data_file, fake_providers, tmp_path):
+    conv = load_conversations(data_file)[0]
+    result = run_sozograph(conv, model="fake")
+    metrics = aggregate("sozograph", [result], [[True, False]])
+
+    path = save([metrics], {"sozograph": [result]}, tmp_path, config={"provider": "fake"})
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert "qa_log" not in payload
+
+
 def test_metrics_report_per_conversation_figures():
     from bench.locomo.metrics import Metrics
 

@@ -13,7 +13,7 @@ import sys
 
 from sozograph.providers import get_provider
 
-from .judge import judge
+from .judge import Verdict, judge
 from .load import DEFAULT_CATEGORIES, describe, load_conversations
 from .metrics import aggregate, render_table, save
 from .runners import RUNNERS
@@ -125,7 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             judge_kwargs[name] = value
 
     judge_provider = get_provider(args.judge, **judge_kwargs)
-    results, all_metrics = {}, []
+    results, all_verdicts, all_metrics = {}, {}, []
 
     def _save_now(*, note: str | None = None):
         config = {
@@ -143,7 +143,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         if note:
             config["note"] = note
-        return save(all_metrics, results, args.out, config=config)
+        return save(all_metrics, results, args.out, config=config, verdicts=all_verdicts)
 
     # A quota-constrained provider (a free-tier daily cap, say) can die mid-run
     # after real, already-paid-for API calls. Losing that work on every crash
@@ -179,13 +179,16 @@ def main(argv: list[str] | None = None) -> int:
                     # and already cost real, billed API calls. So this is a
                     # real for-loop, not a list comprehension: whatever marks
                     # exist when it raises are still recorded, against only
-                    # the answers that were actually judged.
+                    # the answers that were actually judged. The full Verdict
+                    # (not just .correct) is kept so the saved results can
+                    # show which questions failed and the judge's own reason,
+                    # not just an aggregate accuracy percentage.
                     total_questions = len(result.answers)
-                    marks: list[bool] = []
+                    marks: list[Verdict] = []
                     try:
                         for a in result.answers:
                             marks.append(judge(judge_provider, question=a.question,
-                                                gold=a.gold, prediction=a.prediction).correct)
+                                                gold=a.gold, prediction=a.prediction))
                     finally:
                         judged = len(marks)
                         if judged < total_questions:
@@ -194,13 +197,15 @@ def main(argv: list[str] | None = None) -> int:
                         runs.append(result)
                         verdicts.append(marks)
 
-                    hits = sum(marks)
+                    hits = sum(v.correct for v in marks)
                     print(f"      {hits}/{len(marks)} correct, "
                           f"{result.total_tokens:,} tokens, {result.total_calls} calls")
             finally:
                 if runs:
                     results[system] = runs
-                    all_metrics.append(aggregate(system, runs, verdicts))
+                    all_verdicts[system] = verdicts
+                    bool_verdicts = [[v.correct for v in vs] for vs in verdicts]
+                    all_metrics.append(aggregate(system, runs, bool_verdicts))
     except Exception:
         path = _save_now(note="partial: run raised before completing; see stderr for the cause")
         done = sum(len(r) for r in results.values())
