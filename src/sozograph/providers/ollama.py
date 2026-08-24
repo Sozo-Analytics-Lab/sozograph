@@ -19,6 +19,18 @@ class OllamaProvider(LLMProvider):
 
     name: ClassVar[str] = "ollama"
     host: str | None = None
+    #: Ollama's own "vram-based default" tops out at 4096 regardless of how
+    #: much VRAM is actually free -- observed truncating mid-JSON on an
+    #: extraction segment well within a 16GB GPU's headroom. None keeps
+    #: Ollama's default so laptop/no-GPU users aren't pushed into a bigger
+    #: KV-cache than they asked for.
+    num_ctx: int | None = None
+
+    def _options(self, temperature: float) -> dict[str, Any]:
+        options: dict[str, Any] = {"temperature": temperature}
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        return options
 
     def _client(self):
         if getattr(self, "_cached", None) is None:
@@ -44,7 +56,7 @@ class OllamaProvider(LLMProvider):
                 {"role": "user", "content": user},
             ],
             format=schema,
-            options={"temperature": temperature},
+            options=self._options(temperature),
         )
         self._record(resp)
         return loads_lenient(self._content(resp))
@@ -56,7 +68,7 @@ class OllamaProvider(LLMProvider):
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            options={"temperature": temperature},
+            options=self._options(temperature),
         )
         self._record(resp)
         return self._content(resp).strip()

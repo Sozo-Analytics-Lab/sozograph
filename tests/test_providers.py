@@ -485,6 +485,20 @@ def test_ollama_needs_no_api_key(fake_ollama):
     assert get_provider("ollama").complete_json(system="s", user="u", schema=SCHEMA) == PAYLOAD
 
 
+def test_ollama_num_ctx_unset_by_default(fake_ollama, captured):
+    # Ollama's own default should be left alone unless explicitly overridden.
+    get_provider("ollama:llama3.2").complete_json(system="s", user="u", schema=SCHEMA)
+    assert "num_ctx" not in captured["options"]
+
+
+def test_ollama_num_ctx_override(fake_ollama, captured):
+    # Ollama's "vram-based default" tops out at 4096 regardless of free VRAM,
+    # which truncates a long extraction segment's JSON mid-output -- this is
+    # the escape hatch, threaded through from bench's --num-ctx.
+    get_provider("ollama:llama3.2", num_ctx=8192).complete_json(system="s", user="u", schema=SCHEMA)
+    assert captured["options"]["num_ctx"] == 8192
+
+
 # --------------------------------------------------------------------------
 # LiteLLM and LangChain: bring-your-own transport
 # --------------------------------------------------------------------------

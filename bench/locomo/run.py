@@ -44,6 +44,11 @@ def main(argv: list[str] | None = None) -> int:
                              "since both would otherwise read the same OPENAI_API_KEY)")
     parser.add_argument("--judge-api-key", default=None,
                         help="API key for --judge")
+    parser.add_argument("--num-ctx", type=int, default=None,
+                        help="Ollama context window override for --provider/--judge "
+                             "(ignored for non-ollama providers; Ollama's own default "
+                             "tops out at 4096 regardless of free VRAM, which can silently "
+                             "truncate a long extraction segment's JSON output)")
     parser.add_argument("--systems", default="sozograph",
                         help="Comma-separated: sozograph, full_context")
     parser.add_argument("--limit", type=int, default=None,
@@ -94,6 +99,11 @@ def main(argv: list[str] | None = None) -> int:
     judge_kwargs = {"base_url": args.judge_base_url} if args.judge_base_url else {}
     if args.judge_api_key:
         judge_kwargs["api_key"] = args.judge_api_key
+    if args.num_ctx is not None:
+        if args.provider.startswith("ollama"):
+            provider_kwargs["num_ctx"] = args.num_ctx
+        if args.judge.startswith("ollama"):
+            judge_kwargs["num_ctx"] = args.num_ctx
 
     judge_provider = get_provider(args.judge, **judge_kwargs)
     results, all_metrics = {}, []
