@@ -25,11 +25,30 @@ class OllamaProvider(LLMProvider):
     #: Ollama's default so laptop/no-GPU users aren't pushed into a bigger
     #: KV-cache than they asked for.
     num_ctx: int | None = None
+    #: Hard cap on completion length. The extraction schema's arrays (facts,
+    #: prefs, ...) have no maxItems, and grammar-constrained decoding removes
+    #: the model's own "I'm done" signal at each array element -- it only ever
+    #: sees "continue the array or close it", not "you have said enough".
+    #: A smaller/quantized model can pick "continue" long past the point of
+    #: any new information, restating near-duplicate facts indefinitely.
+    #: Observed live: one segment ran 41 minutes and ~170k tokens without
+    #: closing its JSON. None keeps Ollama's own (effectively unbounded)
+    #: default.
+    num_predict: int | None = None
+    #: Ollama's default is 1.1. Raising this trades a little quality for a
+    #: stronger penalty against re-emitting recently-seen tokens, which is
+    #: the other lever against the same repetition failure mode -- num_predict
+    #: only bounds the damage, this reduces how often it happens.
+    repeat_penalty: float | None = None
 
     def _options(self, temperature: float) -> dict[str, Any]:
         options: dict[str, Any] = {"temperature": temperature}
         if self.num_ctx is not None:
             options["num_ctx"] = self.num_ctx
+        if self.num_predict is not None:
+            options["num_predict"] = self.num_predict
+        if self.repeat_penalty is not None:
+            options["repeat_penalty"] = self.repeat_penalty
         return options
 
     def _client(self):

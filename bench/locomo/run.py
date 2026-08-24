@@ -49,6 +49,18 @@ def main(argv: list[str] | None = None) -> int:
                              "(ignored for non-ollama providers; Ollama's own default "
                              "tops out at 4096 regardless of free VRAM, which can silently "
                              "truncate a long extraction segment's JSON output)")
+    parser.add_argument("--num-predict", type=int, default=None,
+                        help="Ollama max completion tokens for --provider/--judge (ignored "
+                             "for non-ollama providers; the extraction schema's arrays have "
+                             "no length limit, and grammar-constrained decoding on a small "
+                             "model can loop restating near-duplicate items indefinitely -- "
+                             "this bounds the damage to a fast, clean failure instead of a "
+                             "multi-hour hang)")
+    parser.add_argument("--repeat-penalty", type=float, default=None,
+                        help="Ollama repeat-penalty override for --provider/--judge (ignored "
+                             "for non-ollama providers; Ollama's default is 1.1 -- raising it "
+                             "reduces how often the repetition loop --num-predict guards "
+                             "against happens in the first place)")
     parser.add_argument("--systems", default="sozograph",
                         help="Comma-separated: sozograph, full_context")
     parser.add_argument("--limit", type=int, default=None,
@@ -99,11 +111,18 @@ def main(argv: list[str] | None = None) -> int:
     judge_kwargs = {"base_url": args.judge_base_url} if args.judge_base_url else {}
     if args.judge_api_key:
         judge_kwargs["api_key"] = args.judge_api_key
-    if args.num_ctx is not None:
+    ollama_options = {
+        "num_ctx": args.num_ctx,
+        "num_predict": args.num_predict,
+        "repeat_penalty": args.repeat_penalty,
+    }
+    for name, value in ollama_options.items():
+        if value is None:
+            continue
         if args.provider.startswith("ollama"):
-            provider_kwargs["num_ctx"] = args.num_ctx
+            provider_kwargs[name] = value
         if args.judge.startswith("ollama"):
-            judge_kwargs["num_ctx"] = args.num_ctx
+            judge_kwargs[name] = value
 
     judge_provider = get_provider(args.judge, **judge_kwargs)
     results, all_metrics = {}, []

@@ -499,6 +499,25 @@ def test_ollama_num_ctx_override(fake_ollama, captured):
     assert captured["options"]["num_ctx"] == 8192
 
 
+def test_ollama_num_predict_and_repeat_penalty_unset_by_default(fake_ollama, captured):
+    get_provider("ollama:llama3.2").complete_json(system="s", user="u", schema=SCHEMA)
+    assert "num_predict" not in captured["options"]
+    assert "repeat_penalty" not in captured["options"]
+
+
+def test_ollama_num_predict_and_repeat_penalty_override(fake_ollama, captured):
+    # The extraction schema's arrays have no maxItems, and grammar-constrained
+    # decoding on a small model can loop restating near-duplicate items
+    # indefinitely instead of closing the JSON (observed live: 41 minutes,
+    # ~170k tokens, one segment). num_predict bounds the damage to a fast
+    # failure; repeat_penalty is the other lever, against the loop itself.
+    get_provider(
+        "ollama:llama3.2", num_predict=1500, repeat_penalty=1.3
+    ).complete_json(system="s", user="u", schema=SCHEMA)
+    assert captured["options"]["num_predict"] == 1500
+    assert captured["options"]["repeat_penalty"] == 1.3
+
+
 # --------------------------------------------------------------------------
 # LiteLLM and LangChain: bring-your-own transport
 # --------------------------------------------------------------------------
