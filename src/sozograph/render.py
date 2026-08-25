@@ -11,7 +11,16 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from .retrieve import rank
-from .schema import Contradiction, Entity, Episode, Fact, OpenLoop, Passport, Preference
+from .schema import (
+    Contradiction,
+    Entity,
+    Episode,
+    Fact,
+    Observation,
+    OpenLoop,
+    Passport,
+    Preference,
+)
 from .utils import normalize_key
 
 _DAY = 86_400.0
@@ -27,6 +36,7 @@ class Caps:
     open_loops: int = 12
     contradictions: int = 8
     episodes: int = 12
+    observations: int = 40
 
 
 #: Trimmed in this order when over budget. Episodes go first because the belief
@@ -34,12 +44,16 @@ class Caps:
 #: losing an episode loses only detail. Facts have a floor and are trimmed last.
 #: With a query, every cut is relevance-aware, so the trim order matters less
 #: than it used to; without one, this ordering still decides.
+#: Observations are the recall layer a single-hop question reads from, so they
+#: are trimmed late and keep a high floor: episodes (the coarse narrative they
+#: supersede) go first, and the belief-state facts are trimmed last of all.
 _TRIM_ORDER = (
     ("episodes", 0),
     ("contradictions", 0),
     ("entities", 3),
     ("open_loops", 2),
     ("prefs", 5),
+    ("observations", 12),
     ("facts", 8),
 )
 
@@ -102,6 +116,7 @@ def _bounds(passport: Passport) -> tuple:
     stamps += [p.ts.timestamp() for p in passport.prefs]
     stamps += [o.ts.timestamp() for o in passport.open_loops]
     stamps += [e.ts.timestamp() for e in passport.episodes]
+    stamps += [o.ts.timestamp() for o in passport.observations]
     stamps += [c.ts_new.timestamp() for c in passport.contradictions]
     stamps.append(passport.updated_at.timestamp())
     return max(stamps), min(stamps)
@@ -150,6 +165,10 @@ def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> li
         caps.entities,
         text_of=lambda e: e.search_text(),
     )
+    observations: list[Observation] = _select(
+        passport.observations, query, t_prior, caps.observations,
+        text_of=lambda o: o.search_text(),
+    )
     episodes: list[Episode] = _select(
         passport.episodes,
         query,
@@ -176,6 +195,8 @@ def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> li
             [f"- {normalize_key(f.key)}: {_val_to_str(f.value)}" for f in facts])
     section("Preferences:",
             [f"- {normalize_key(p.key)}: {_val_to_str(p.value)}" for p in prefs])
+    section("Details recalled:",
+            [f"- {_val_to_str(o.text, max_len=300)}" for o in observations])
     section("Key entities:",
             [f"- {e.name} ({e.type})" if e.type and e.type != "other" else f"- {e.name}"
              for e in entities])
@@ -206,6 +227,11 @@ def export_context(
     section renders in full; ranking only decides what survives a cut, so an
     old but relevant fact now outranks a recent irrelevant one at the edge of
     the cap. Without a query the prior alone orders everything.
+
+    The `Details recalled` section is the observation layer: atomic statements
+    of what was said or happened. A single-hop question ("where did the dog
+    hide the bone") is usually answered from here, not from the belief-state
+    facts, so it is ranked against the query and trimmed late.
     """
     budget_chars = max(400, int(budget_chars or 3000))
     current = caps or Caps()

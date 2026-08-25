@@ -3,7 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sozograph.render import export_context
-from sozograph.schema import Contradiction, Entity, Fact, OpenLoop, Passport, Preference
+from sozograph.schema import (
+    Contradiction,
+    Entity,
+    Fact,
+    Observation,
+    OpenLoop,
+    Passport,
+    Preference,
+)
 
 
 def dt(s: str) -> datetime:
@@ -145,8 +153,49 @@ def test_search_texts_cover_key_value_item():
     pref = Preference(key="tone", value="terse", source="s")
     e = Entity(name="SozoGraph", type="project", aliases=["Sozo Graph"])
     loop = OpenLoop(item="book flight", source="s")
+    obs = Observation(text="Oliver hid his bone in Melanie's slipper", source="s",
+                      participants=["Melanie"])
 
     assert "kwekwe" in f.search_text().lower()
     assert "terse" in pref.search_text().lower()
     assert "sozo graph" in e.search_text().lower()
     assert "flight" in loop.search_text().lower()
+    assert "slipper" in obs.search_text().lower()
+    assert "melanie" in obs.search_text().lower()
+
+
+def test_observations_render_and_rank_against_query():
+    """A single-hop detail lives in an observation and surfaces on its query."""
+    p = Passport()
+    # The answer-bearing observation, old and buried among noise.
+    p.observations.append(
+        Observation(
+            text="Oliver the dog hid his bone in Melanie's slipper",
+            ts=dt("2021-01-01T00:00:00Z"), source="t0", participants=["Melanie"],
+        )
+    )
+    for i in range(80):
+        p.observations.append(
+            Observation(text=f"unrelated remark number {i} about the weather",
+                        ts=dt("2026-02-03T10:00:00Z"), source="t1")
+        )
+
+    txt = export_context(p, query="where did Oliver hide his bone", budget_chars=20_000)
+    assert "Details recalled:" in txt
+    assert "slipper" in txt
+
+
+def test_observations_survive_a_tight_budget_when_relevant():
+    """Past the cap and under a small budget, the matched observation wins."""
+    p = Passport()
+    p.observations.append(
+        Observation(text="Tim is learning German for his semester in Galway",
+                    ts=dt("2020-06-01T00:00:00Z"), source="t0")
+    )
+    for i in range(120):
+        p.observations.append(
+            Observation(text=f"generic filler observation {i}",
+                        ts=dt("2026-02-03T10:00:00Z"), source="t1")
+        )
+    txt = export_context(p, query="which language is Tim learning", budget_chars=1500)
+    assert "German" in txt

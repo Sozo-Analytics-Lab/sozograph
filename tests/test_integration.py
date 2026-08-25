@@ -49,9 +49,12 @@ class FakeProvider(LLMProvider):
         self.usage.add(len(user) // 4, 60)
         text = user.lower()
 
-        facts, prefs, episode = [], [], None
+        facts, prefs, episode, observations = [], [], None, []
         if "kitchen" in text:
             facts.append({"key": "kitchen_colour", "value": "sage green", "confidence": 0.9})
+            observations.append(
+                {"text": "Melanie hung her grandmother's painting above the stove"}
+            )
             episode = {
                 "summary": "Melanie finished renovating her kitchen in sage green and "
                            "hung her grandmother's painting above the stove.",
@@ -82,6 +85,7 @@ class FakeProvider(LLMProvider):
             "prefs": prefs,
             "entities": [],
             "open_loops": [],
+            "observations": observations,
             "episode": episode or {"summary": "General conversation.", "participants": [],
                                    "keywords": [], "salience": 0.2},
         }
@@ -105,11 +109,20 @@ def test_full_ingest_builds_a_usable_passport(graph):
 
     assert passport.facts, "no facts extracted"
     assert passport.episodes, "no episodes recorded"
+    assert passport.observations, "no observations recorded"
 
     by_key = {f.key: f.value for f in passport.facts}
     assert by_key["location"] == "Kwekwe", "the newest value must win"
     assert by_key["kitchen_colour"] == "sage green"
     assert any(p.key == "tone" for p in passport.prefs)
+
+    # The atomic detail is retrievable by a single-hop query, and the segment's
+    # participants rode along onto the observation for entity-aware ranking.
+    painting = next(o for o in passport.observations if "painting" in o.text)
+    assert "Melanie" in painting.participants
+    answer = passport.context(query="where did Melanie hang the painting", budget_chars=4000)
+    assert "Details recalled:" in answer
+    assert "above the stove" in answer
 
     # Harare -> Kwekwe is a real change and must be recorded once.
     changes = [c for c in passport.contradictions if c.key == "location"]
@@ -192,13 +205,30 @@ def test_passport_round_trips_through_a_file(graph, tmp_path):
     assert reloaded.context() == passport.context()
 
 
+def test_a_pre_observations_passport_still_loads():
+    """A 2.0 passport written before the observation layer must load clean."""
+    legacy = {
+        "version": "2.0",
+        "updated_at": "2026-02-03T10:00:00+00:00",
+        "facts": [{"key": "role", "value": "developer",
+                   "ts": "2026-02-03T10:00:00+00:00", "confidence": 0.9, "source": "t1"}],
+        "prefs": [], "entities": [], "open_loops": [],
+        "contradictions": [], "sources": [],
+    }
+    p = Passport.from_dict(legacy)
+    assert p.observations == []
+    assert p.facts[0].key == "role"
+    # And a round trip through the new writer stays lossless.
+    assert Passport.from_json(p.to_json()).to_compact_dict() == p.to_compact_dict()
+
+
 def test_passport_is_plain_readable_json(graph, tmp_path):
     passport = graph.ingest(CONVERSATION)
     path = tmp_path / "user.json"
     passport.save(path)
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["version"] == "2.0"
+    assert raw["version"] == "2.1"
     assert isinstance(raw["facts"], list)
     assert path.stat().st_size < 20_000, "a passport should stay small"
 

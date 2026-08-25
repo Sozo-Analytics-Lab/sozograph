@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sozograph.resolver import merge_passport_update
-from sozograph.schema import Entity, Fact, OpenLoop, Passport, Preference
+from sozograph.schema import Entity, Fact, Observation, OpenLoop, Passport, Preference
 
 
 def dt(s: str) -> datetime:
@@ -132,3 +132,29 @@ def test_open_loop_dedupe():
     assert len(out.open_loops) == 1
     assert out.open_loops[0].source == "t2"
     assert stats.open_loops_added == 1
+
+
+def test_observations_are_append_only_with_text_dedupe():
+    base = Passport()
+    first = [
+        Observation(text="Oliver hid his bone in the slipper",
+                    ts=dt("2026-02-02T10:00:00Z"), source="t1", participants=["Melanie"]),
+        Observation(text="The hike took two hours",
+                    ts=dt("2026-02-02T10:00:00Z"), source="t1"),
+    ]
+    out, stats = merge_passport_update(base, observations=first)
+    assert len(out.observations) == 2
+    assert stats.observations_added == 2
+
+    # Re-ingesting the same statement (whitespace/case differ) does not duplicate
+    # it; participants union and the earliest timestamp is kept.
+    again = [
+        Observation(text="  oliver hid his BONE in the slipper ",
+                    ts=dt("2026-02-01T09:00:00Z"), source="t2", participants=["Oliver"]),
+    ]
+    out, stats = merge_passport_update(out, observations=again)
+    assert len(out.observations) == 2
+    assert stats.observations_added == 0
+    kept = next(o for o in out.observations if "bone" in o.text.lower())
+    assert set(p.lower() for p in kept.participants) == {"melanie", "oliver"}
+    assert kept.ts == dt("2026-02-01T09:00:00Z")  # earliest observation wins

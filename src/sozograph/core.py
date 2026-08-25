@@ -218,6 +218,7 @@ def _update_kwargs(update: dict[str, Any]) -> dict[str, Any]:
         "entities": update.get("entities") or [],
         "open_loops": update.get("open_loops") or [],
         "episodes": update.get("episodes") or [],
+        "observations": update.get("observations") or [],
     }
 
 

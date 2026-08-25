@@ -106,7 +106,7 @@ passport.context(budget_chars=1500)
 passport.token_estimate()
 ```
 
-Facts and preferences are included in full while the budget allows. With a query, every section is ranked against it (BM25 blended with recency and confidence), so a cap cut drops irrelevant records rather than old ones.
+The belief state (facts and preferences) is included in full while the budget allows. Atomic observations, the recall layer a single-hop question reads from, are ranked against the query and rendered under `Details recalled`. With a query, every section is ranked against it (BM25 blended with recency and confidence), so a cap cut drops irrelevant records rather than old ones.
 
 ### Move it around
 
@@ -186,12 +186,16 @@ A first real run, on a free local setup rather than GPT-4o-mini: Unsloth's `Llam
 
 On the six conversations both systems completed, sozograph trails full_context by 30.7 points on the identical backbone. That gap is not the model's own ceiling: full_context reaches 47% with that same weak model. It is SozoGraph's compression and retrieval pipeline losing accuracy on top of it.
 
-Two limitations this run surfaced directly:
+The re-run isolated where that gap comes from. On the matched six conversations sozograph answered "Not mentioned" to **68% of all questions**, against 17% for full_context. It is not reasoning badly; the answer is not in the rendered memory. Of the questions it abstained on, full_context (same model, same question) answered **285** correctly: the information was in the conversation and the pipeline had dropped it. Fix that coverage and the ceiling is ~45%, essentially full_context's own score.
 
-- **Fact retrieval was not query-aware.** Only episodes were ranked against the question (BM25, in [`retrieve.py`](src/sozograph/retrieve.py)); facts and preferences, the actual answer source for most questions, were selected by recency and confidence alone in [`render.py`](src/sozograph/render.py). Past 60 facts (the default cap), whichever were oldest or least confident got dropped regardless of relevance. **Fixed:** every section is now query-ranked, blended with the recency x confidence prior.
-- **Extraction wasn't reliable on weak models yet.** The extraction schema's arrays (`facts`, `prefs`, `entities`, `open_loops`) had no length limit, and grammar-constrained decoding on a small model can loop restating near-duplicate items instead of terminating. Four separate conversations crashed this way in a single eval run, on four different segments. **Fixed:** the schema now carries `maxItems` bounds on every array, accepted by OpenAI strict mode, Gemini's `response_schema`, and Ollama's `format`, so the loop terminates by construction; the extractor also truncates defensively. A relative-date rule in the extraction prompt ("last Saturday" must become an absolute date computed from the segment timestamp) targets the temporal-question losses.
+The cause was the extraction layer, not retrieval. The extractor was told to keep "beliefs, not quotes... only what is stable or actionable," so incidental detail a single-hop question asks for ("the hike took two hours", "he hid the bone in a slipper") was discarded before it could ever be retrieved.
 
-GPT-4o-mini is roughly 25 points ahead of this 8B model even under identical conditions (full_context vs. full_context), so most of the gap above reflects backbone weakness as much as architecture. Read these numbers as directional, not final: the SozoGraph-vs-LightMem comparison still needs a GPT-4o-mini-class backbone to be a fair fight.
+- **Memory now has a recall layer.** Alongside the belief-state facts, extraction emits **atomic observations**: self-contained, third-person statements of what was said or happened, one per line, relative dates resolved. They are append-only, ranked against the question by the same pure-Python BM25 as everything else, and rendered under `Details recalled`. This is the portable form of the "atomic fact" memory that leads the LoCoMo recall benchmarks (AtomMem, Mem0), carrying no embedding and no vector store. See [`ADR_Atomic_Observations_2026-08-25.md`](docs/ADR_Atomic_Observations_2026-08-25.md).
+- **Query-aware ranking and bounded extraction** (prior fixes): every section is ranked against the question, and every extraction array carries a `maxItems` bound so grammar-constrained decoding on a small model cannot loop, accepted by OpenAI strict mode, Gemini's `response_schema`, and Ollama's `format` alike.
+
+The 16.61% row above predates the observation layer. Re-measurement on the matched six conversations is the next step; the number in the table will move when it lands.
+
+GPT-4o-mini is roughly 25 points ahead of this 8B model even under identical conditions (full_context vs. full_context), so much of the remaining gap reflects backbone weakness as much as architecture. Read these numbers as directional, not final: the SozoGraph-vs-LightMem comparison still needs a GPT-4o-mini-class backbone to be a fair fight.
 
 ## Compared to LightMem
 

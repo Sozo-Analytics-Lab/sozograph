@@ -146,6 +146,58 @@ class Entity(BaseModel):
         return d
 
 
+class Observation(BaseModel):
+    """
+    One atomic thing that was said or happened, kept verbatim in meaning.
+
+    Facts hold the belief state: what is true now, deduplicated under a key.
+    That layer deliberately discards incidental detail ("the hike took two
+    hours", "she hid the bone in a slipper") because it is neither stable nor
+    keyable. But that incidental detail is exactly what a single-hop recall
+    question asks for. An observation is a self-contained, third-person
+    statement of one such detail, with relative dates already resolved, so it
+    can be matched by a later query and injected on its own.
+
+    It is append-only and never keyed: there is no belief to overwrite, only a
+    record of what was observed. Retrieval, not reconciliation, decides what
+    surfaces. This is the portable form of the "atomic fact" memory that wins
+    on long-conversation recall benchmarks, carrying no embedding and no vector
+    store: a plain string ranked by the same pure-Python BM25 as everything
+    else.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(..., min_length=1)
+    ts: datetime = Field(default_factory=utcnow)
+    source: str = Field(..., min_length=1)
+    participants: list[str] = Field(default_factory=list)
+
+    @field_validator("participants")
+    @classmethod
+    def _clean_participants(cls, v: list[str]) -> list[str]:
+        out: list[str] = []
+        seen = set()
+        for p in v or []:
+            p2 = (p or "").strip()
+            if not p2 or p2.lower() in seen:
+                continue
+            seen.add(p2.lower())
+            out.append(p2)
+        return out
+
+    def search_text(self) -> str:
+        """Everything worth matching a query against."""
+        parts = [self.text, " ".join(self.participants)]
+        return " ".join(p for p in parts if p)
+
+    def to_compact(self) -> dict[str, Any]:
+        d: dict[str, Any] = {"text": self.text, "ts": _iso(self.ts), "source": self.source}
+        if self.participants:
+            d["participants"] = list(self.participants)
+        return d
+
+
 class OpenLoop(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -262,7 +314,7 @@ class SourceRef(BaseModel):
         return d
 
 
-PASSPORT_VERSION = "2.0"
+PASSPORT_VERSION = "2.1"
 
 
 class Passport(BaseModel):
@@ -271,9 +323,10 @@ class Passport(BaseModel):
 
     This is the whole product: a small JSON object holding what is true
     (`facts`), what is wanted (`prefs`), who and what is involved (`entities`),
-    what is unfinished (`open_loops`), what changed (`contradictions`), and
-    what happened (`episodes`). It moves between runtimes, databases, and
-    client applications as plain JSON, with no vector store to migrate and no
+    what is unfinished (`open_loops`), what changed (`contradictions`), what
+    happened (`episodes`), and the atomic details worth recalling
+    (`observations`). It moves between runtimes, databases, and client
+    applications as plain JSON, with no vector store to migrate and no
     embedding model to match.
     """
 
@@ -289,6 +342,7 @@ class Passport(BaseModel):
     open_loops: list[OpenLoop] = Field(default_factory=list)
     contradictions: list[Contradiction] = Field(default_factory=list)
     episodes: list[Episode] = Field(default_factory=list)
+    observations: list[Observation] = Field(default_factory=list)
     sources: list[SourceRef] = Field(default_factory=list)
 
     meta: dict[str, Any] = Field(default_factory=dict)
@@ -335,6 +389,8 @@ class Passport(BaseModel):
         d["contradictions"] = [c.to_compact() for c in self.contradictions]
         if self.episodes:
             d["episodes"] = [e.to_compact() for e in self.episodes]
+        if self.observations:
+            d["observations"] = [o.to_compact() for o in self.observations]
         d["sources"] = [s.to_compact() for s in self.sources]
         if self.meta:
             d["meta"] = self.meta
@@ -356,7 +412,7 @@ class Passport(BaseModel):
         payload = {k: v for k, v in data.items() if k in known}
         payload.setdefault("version", PASSPORT_VERSION)
         for section in ("facts", "prefs", "entities", "open_loops",
-                        "contradictions", "episodes", "sources"):
+                        "contradictions", "episodes", "observations", "sources"):
             payload.setdefault(section, [])
         payload.setdefault("meta", {})
 
@@ -420,7 +476,7 @@ class Passport(BaseModel):
 
     def is_empty(self) -> bool:
         return not (self.facts or self.prefs or self.entities
-                    or self.open_loops or self.episodes)
+                    or self.open_loops or self.episodes or self.observations)
 
     def upsert_source(self, src: SourceRef) -> None:
         for i, existing in enumerate(self.sources):

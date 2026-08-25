@@ -36,7 +36,7 @@ def test_every_extraction_array_is_bounded():
         n for n, s in EXTRACTION_SCHEMA["properties"].items()
         if isinstance(s, dict) and s.get("type") == "array"
     ]
-    assert set(arrays) == {"facts", "prefs", "entities", "open_loops"}
+    assert set(arrays) == {"facts", "prefs", "entities", "open_loops", "observations"}
     for name in arrays:
         assert EXTRACTION_SCHEMA["properties"][name]["maxItems"] == ARRAY_LIMITS[name]
 

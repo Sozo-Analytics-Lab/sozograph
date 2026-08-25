@@ -16,6 +16,7 @@ from .schema import (
     Entity,
     Episode,
     Fact,
+    Observation,
     OpenLoop,
     Passport,
     Preference,
@@ -30,6 +31,7 @@ class ResolveStats:
     entities_merged: int = 0
     open_loops_added: int = 0
     episodes_added: int = 0
+    observations_added: int = 0
     contradictions_added: int = 0
     keys_deduped: int = 0
     dedupe: DedupeReport = field(default_factory=DedupeReport)
@@ -41,6 +43,7 @@ class ResolveStats:
             "entities_merged": self.entities_merged,
             "open_loops_added": self.open_loops_added,
             "episodes_added": self.episodes_added,
+            "observations_added": self.observations_added,
             "contradictions_added": self.contradictions_added,
             "keys_deduped": self.keys_deduped,
         }
@@ -216,6 +219,39 @@ def _upsert_episode(existing: list[Episode], incoming: Episode) -> bool:
     return True
 
 
+def _observation_key(text: str) -> str:
+    return " ".join((text or "").strip().lower().split())
+
+
+def _add_observation(existing: list[Observation], incoming: Observation) -> bool:
+    """
+    Append an observation unless the identical statement is already held.
+
+    Observations are append-only: there is no belief to overwrite, only a
+    record of what was seen. The only merge is exact-text deduplication, so
+    re-ingesting the same conversation does not double the recall layer.
+    Participants union when the same statement recurs with new names attached.
+    """
+    key = _observation_key(incoming.text)
+    if not key:
+        return False
+    for obs in existing:
+        if _observation_key(obs.text) == key:
+            merged = list(obs.participants)
+            seen = {p.lower() for p in merged}
+            for p in incoming.participants:
+                if p.lower() not in seen:
+                    seen.add(p.lower())
+                    merged.append(p)
+            obs.participants = merged
+            if incoming.ts < obs.ts:
+                obs.ts = incoming.ts
+                obs.source = incoming.source
+            return False
+    existing.append(incoming)
+    return True
+
+
 def merge_passport_update(
     base: Passport,
     *,
@@ -224,6 +260,7 @@ def merge_passport_update(
     entities: list[Entity] | None = None,
     open_loops: list[OpenLoop] | None = None,
     episodes: list[Episode] | None = None,
+    observations: list[Observation] | None = None,
 ) -> tuple[Passport, ResolveStats]:
     """Merge an extraction update into a passport. Deterministic throughout."""
     stats = ResolveStats()
@@ -251,6 +288,9 @@ def merge_passport_update(
 
     for episode in episodes or []:
         stats.episodes_added += int(_upsert_episode(base.episodes, episode))
+
+    for observation in observations or []:
+        stats.observations_added += int(_add_observation(base.observations, observation))
 
     if stats.dedupe:
         audit = base.meta.setdefault("dedupe", {})
@@ -312,3 +352,4 @@ def _sort(base: Passport) -> None:
     base.open_loops.sort(key=lambda x: (-x.ts.timestamp(), _loop_key(x.item)))
     base.contradictions.sort(key=lambda x: (normalize_key(x.key), -x.ts_new.timestamp()))
     base.episodes.sort(key=lambda x: (x.ts.timestamp(), x.id))
+    base.observations.sort(key=lambda x: (-x.ts.timestamp(), _observation_key(x.text)))
