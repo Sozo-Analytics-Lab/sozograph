@@ -174,6 +174,25 @@ Check the dataset parsed before spending anything:
 python -m bench.locomo.run --data data/locomo10.json --dry-run
 ```
 
+### Preliminary results
+
+A first real run, on a free local setup rather than GPT-4o-mini: Unsloth's `Llama-3.1-8B-Instruct-GGUF` (Q4_K_M), served by Ollama on a free Kaggle GPU, as both backbone and judge.
+
+| System | Accuracy | Tokens | API calls | Sample |
+|---|---:|---:|---:|---|
+| full_context, this 8B model | 47.79% | 33.03M | 1,540 | 10/10 conversations |
+| sozograph, this 8B model | 16.61% | 1.69M | 1,130 | 6/10 conversations |
+| LightMem, GPT-4o-mini (published, reference only) | 72.99% | 85.19k/conv | 29.83/conv | n/a |
+
+On the six conversations both systems completed, sozograph trails full_context by 30.7 points on the identical backbone. That gap is not the model's own ceiling: full_context reaches 47% with that same weak model. It is SozoGraph's compression and retrieval pipeline losing accuracy on top of it.
+
+Two limitations this run surfaced directly:
+
+- **Fact retrieval is not query-aware.** Only episodes are ranked against the question (BM25, in [`retrieve.py`](src/sozograph/retrieve.py)). Facts and preferences, the actual answer source for most questions, are selected by recency and confidence alone in [`render.py`](src/sozograph/render.py). Past 60 facts (the default cap), whichever are oldest or least confident get dropped regardless of relevance to the question being asked. This is the leading suspect behind the loss concentrating on multi-hop and temporal questions specifically.
+- **Extraction isn't reliable on weak models yet.** The extraction schema's arrays (`facts`, `prefs`, `entities`, `open_loops`) have no length limit, and grammar-constrained decoding on a small model can loop restating near-duplicate items instead of terminating. Four separate conversations crashed this way in a single eval run, on four different segments. `bench/locomo/run.py` now exposes `--num-predict` and `--repeat-penalty` as a partial mitigation; a `maxItems` bound on the schema itself is the real fix and is not yet landed.
+
+GPT-4o-mini is roughly 25 points ahead of this 8B model even under identical conditions (full_context vs. full_context), so most of the gap above reflects backbone weakness as much as architecture. Read these numbers as directional, not final: the SozoGraph-vs-LightMem comparison still needs a GPT-4o-mini-class backbone to be a fair fight.
+
 ## Compared to LightMem
 
 |  | SozoGraph | LightMem |
