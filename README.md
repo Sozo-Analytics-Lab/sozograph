@@ -106,7 +106,7 @@ passport.context(budget_chars=1500)
 passport.token_estimate()
 ```
 
-Facts and preferences are always included in full. The query only reorders episodes.
+Facts and preferences are included in full while the budget allows. With a query, every section is ranked against it (BM25 blended with recency and confidence), so a cap cut drops irrelevant records rather than old ones.
 
 ### Move it around
 
@@ -188,8 +188,8 @@ On the six conversations both systems completed, sozograph trails full_context b
 
 Two limitations this run surfaced directly:
 
-- **Fact retrieval is not query-aware.** Only episodes are ranked against the question (BM25, in [`retrieve.py`](src/sozograph/retrieve.py)). Facts and preferences, the actual answer source for most questions, are selected by recency and confidence alone in [`render.py`](src/sozograph/render.py). Past 60 facts (the default cap), whichever are oldest or least confident get dropped regardless of relevance to the question being asked. This is the leading suspect behind the loss concentrating on multi-hop and temporal questions specifically.
-- **Extraction isn't reliable on weak models yet.** The extraction schema's arrays (`facts`, `prefs`, `entities`, `open_loops`) have no length limit, and grammar-constrained decoding on a small model can loop restating near-duplicate items instead of terminating. Four separate conversations crashed this way in a single eval run, on four different segments. `bench/locomo/run.py` now exposes `--num-predict` and `--repeat-penalty` as a partial mitigation; a `maxItems` bound on the schema itself is the real fix and is not yet landed.
+- **Fact retrieval was not query-aware.** Only episodes were ranked against the question (BM25, in [`retrieve.py`](src/sozograph/retrieve.py)); facts and preferences, the actual answer source for most questions, were selected by recency and confidence alone in [`render.py`](src/sozograph/render.py). Past 60 facts (the default cap), whichever were oldest or least confident got dropped regardless of relevance. **Fixed:** every section is now query-ranked, blended with the recency x confidence prior.
+- **Extraction wasn't reliable on weak models yet.** The extraction schema's arrays (`facts`, `prefs`, `entities`, `open_loops`) had no length limit, and grammar-constrained decoding on a small model can loop restating near-duplicate items instead of terminating. Four separate conversations crashed this way in a single eval run, on four different segments. **Fixed:** the schema now carries `maxItems` bounds on every array, accepted by OpenAI strict mode, Gemini's `response_schema`, and Ollama's `format`, so the loop terminates by construction; the extractor also truncates defensively. A relative-date rule in the extraction prompt ("last Saturday" must become an absolute date computed from the segment timestamp) targets the temporal-question losses.
 
 GPT-4o-mini is roughly 25 points ahead of this 8B model even under identical conditions (full_context vs. full_context), so most of the gap above reflects backbone weakness as much as architecture. Read these numbers as directional, not final: the SozoGraph-vs-LightMem comparison still needs a GPT-4o-mini-class backbone to be a fair fight.
 

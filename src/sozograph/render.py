@@ -32,6 +32,8 @@ class Caps:
 #: Trimmed in this order when over budget. Episodes go first because the belief
 #: state is the part that must survive: losing a fact loses knowledge, while
 #: losing an episode loses only detail. Facts have a floor and are trimmed last.
+#: With a query, every cut is relevance-aware, so the trim order matters less
+#: than it used to; without one, this ordering still decides.
 _TRIM_ORDER = (
     ("episodes", 0),
     ("contradictions", 0),
@@ -106,15 +108,17 @@ def _bounds(passport: Passport) -> tuple:
 
 
 def _select(items: list[Any], query: str | None, prior, limit: int,
-            text_of=None) -> list[Any]:
+            text_of) -> list[Any]:
+    """
+    Pick a section's entries, relevance-aware when a query is present.
+
+    Below the caps and the budget the whole section renders regardless, so
+    ranking only decides what survives a cut. With no query the prior alone
+    orders the section, which is the pre-query behaviour exactly.
+    """
     if limit <= 0 or not items:
         return []
-    if text_of is None:
-        # Facts, prefs and loops are not query-ranked: the belief state goes in
-        # whole. Only ordering changes, so that a trim keeps the best ones.
-        scored = rank(items, None, text_of=lambda x: "", limit=limit, prior=prior)
-    else:
-        scored = rank(items, query, text_of=text_of, limit=limit, prior=prior)
+    scored = rank(items, query, text_of=text_of, limit=limit, prior=prior)
     return [s.item for s in scored]
 
 
@@ -123,13 +127,29 @@ def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> li
     kv_prior = _kv_prior(now, oldest)
     t_prior = _time_prior(now, oldest)
 
-    facts: list[Fact] = _select(passport.facts, query, kv_prior, caps.facts)
-    prefs: list[Preference] = _select(passport.prefs, query, kv_prior, caps.prefs)
-    loops: list[OpenLoop] = _select(passport.open_loops, query, t_prior, caps.open_loops)
-    changes: list[Contradiction] = _select(
-        passport.contradictions, query, t_prior, caps.contradictions
+    facts: list[Fact] = _select(
+        passport.facts, query, kv_prior, caps.facts, text_of=lambda f: f.search_text()
     )
-    entities: list[Entity] = list(passport.entities)[: max(0, caps.entities)]
+    prefs: list[Preference] = _select(
+        passport.prefs, query, kv_prior, caps.prefs, text_of=lambda p: p.search_text()
+    )
+    loops: list[OpenLoop] = _select(
+        passport.open_loops, query, t_prior, caps.open_loops, text_of=lambda o: o.search_text()
+    )
+    changes: list[Contradiction] = _select(
+        passport.contradictions,
+        query,
+        t_prior,
+        caps.contradictions,
+        text_of=lambda c: c.search_text(),
+    )
+    entities: list[Entity] = _select(
+        passport.entities,
+        query,
+        None,
+        caps.entities,
+        text_of=lambda e: e.search_text(),
+    )
     episodes: list[Episode] = _select(
         passport.episodes,
         query,
@@ -181,10 +201,11 @@ def export_context(
     """
     Render the passport as a context block.
 
-    With a `query`, episodes are ranked against it lexically. Without one they
-    are ordered by recency and salience. Facts and preferences are always
-    included in full while the budget allows, so a retrieval miss can never
-    hide a known fact.
+    With a `query`, every section is ranked against it lexically, blended with
+    recency and confidence as a prior. Below the caps and the budget each
+    section renders in full; ranking only decides what survives a cut, so an
+    old but relevant fact now outranks a recent irrelevant one at the edge of
+    the cap. Without a query the prior alone orders everything.
     """
     budget_chars = max(400, int(budget_chars or 3000))
     current = caps or Caps()

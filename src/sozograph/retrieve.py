@@ -7,8 +7,10 @@ very little. This is Okapi BM25 in plain Python over the passport's episodes:
 microseconds to run, nothing to download, nothing to migrate, and it works
 identically on a laptop, in a Lambda, and in a browser via Pyodide.
 
-It ranks episodes only. Facts and preferences are small enough to inject in
-full, so a ranking miss costs episodic detail rather than a fact.
+It ranks whatever a caller hands it: episodes, and now facts, preferences,
+entities, loops, and contradictions against the query. Facts and preferences
+are small enough to inject in full below the caps, so ranking only decides
+what survives a cut.
 """
 from __future__ import annotations
 

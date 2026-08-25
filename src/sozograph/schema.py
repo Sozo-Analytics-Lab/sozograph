@@ -39,6 +39,10 @@ class Fact(BaseModel):
             raise ValueError("key cannot be empty")
         return v
 
+    def search_text(self) -> str:
+        """Everything worth matching a query against."""
+        return f"{self.key} {self.value}"
+
     def to_compact(self) -> dict[str, Any]:
         return {
             "key": self.key,
@@ -65,6 +69,10 @@ class Preference(BaseModel):
         if not v:
             raise ValueError("key cannot be empty")
         return v
+
+    def search_text(self) -> str:
+        """Everything worth matching a query against."""
+        return f"{self.key} {self.value}"
 
     def to_compact(self) -> dict[str, Any]:
         return {
@@ -126,6 +134,11 @@ class Entity(BaseModel):
             out.append(a2)
         return out
 
+    def search_text(self) -> str:
+        """Everything worth matching a query against."""
+        parts = [self.name, self.type, " ".join(self.aliases)]
+        return " ".join(p for p in parts if p)
+
     def to_compact(self) -> dict[str, Any]:
         d = {"name": self.name, "type": self.type}
         if self.aliases:
@@ -139,6 +152,10 @@ class OpenLoop(BaseModel):
     item: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
     source: str = Field(..., min_length=1)
+
+    def search_text(self) -> str:
+        """Everything worth matching a query against."""
+        return self.item
 
     def to_compact(self) -> dict[str, Any]:
         return {"item": self.item, "ts": _iso(self.ts), "source": self.source}
@@ -154,6 +171,10 @@ class Contradiction(BaseModel):
     ts_new: datetime
     source_old: str
     source_new: str
+
+    def search_text(self) -> str:
+        """Everything worth matching a query against."""
+        return f"{self.key} {self.old} {self.new}"
 
     def to_compact(self) -> dict[str, Any]:
         return {

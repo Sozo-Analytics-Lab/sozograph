@@ -30,7 +30,30 @@ Rules:
 - The episode summary is different: it records what was discussed, including
   specifics such as names, places, numbers, and dates that would otherwise
   be lost. Write it so it stands alone without the original text.
+- The TIMESTAMP above is "now". Resolve every relative date or duration in the
+  text ("yesterday", "last Saturday", "in two weeks") into an absolute calendar
+  date computed from that timestamp before writing it anywhere.
 """.strip()
+
+
+#: Hard bounds on the extraction arrays.
+#:
+#: Grammar-constrained decoding removes the model's own "I'm done" signal at
+#: each array element: it only ever chooses "continue the array or close it".
+#: A small model can pick "continue" indefinitely, restating near-duplicate
+#: items until the completion cap kills the call mid-JSON. Four conversations
+#: crashed this way in one eval run. A schema-level bound terminates the loop
+#: by construction, and every supported structured-output dialect (OpenAI
+#: strict mode, Gemini response_schema, Ollama format) accepts maxItems.
+ARRAY_LIMITS: dict[str, int] = {
+    "facts": 24,
+    "prefs": 16,
+    "entities": 12,
+    "open_loops": 10,
+    "aliases": 6,
+    "participants": 8,
+    "keywords": 10,
+}
 
 
 def _kv_item_schema() -> dict[str, Any]:
@@ -72,11 +95,13 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "type": "array",
             "description": "Stable truths: role, location, tools owned, project status.",
             "items": _kv_item_schema(),
+            "maxItems": ARRAY_LIMITS["facts"],
         },
         "prefs": {
             "type": "array",
             "description": "Stable preferences: tone, style, language, constraints.",
             "items": _kv_item_schema(),
+            "maxItems": ARRAY_LIMITS["prefs"],
         },
         "entities": {
             "type": "array",
@@ -86,11 +111,16 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "name": {"type": "string"},
                     "type": {"type": "string", "enum": list(ENTITY_TYPES)},
-                    "aliases": {"type": "array", "items": {"type": "string"}},
+                    "aliases": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "maxItems": ARRAY_LIMITS["aliases"],
+                    },
                 },
                 "required": ["name", "type", "aliases"],
                 "additionalProperties": False,
             },
+            "maxItems": ARRAY_LIMITS["entities"],
         },
         "open_loops": {
             "type": "array",
@@ -101,6 +131,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                 "required": ["item"],
                 "additionalProperties": False,
             },
+            "maxItems": ARRAY_LIMITS["open_loops"],
         },
         "episode": {
             "type": "object",
@@ -111,11 +142,16 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             ),
             "properties": {
                 "summary": {"type": "string"},
-                "participants": {"type": "array", "items": {"type": "string"}},
+                "participants": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": ARRAY_LIMITS["participants"],
+                },
                 "keywords": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Distinctive terms someone might search for.",
+                    "maxItems": ARRAY_LIMITS["keywords"],
                 },
                 "salience": {
                     "type": "number",

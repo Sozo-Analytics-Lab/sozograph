@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from .batching import Segment
 from .interaction import Interaction
 from .prompts import (
+    ARRAY_LIMITS,
     EXTRACTION_SCHEMA,
     EXTRACTOR_SYSTEM_PROMPT,
     EXTRACTOR_USER_PROMPT_TEMPLATE,
@@ -147,8 +148,8 @@ class Extractor:
                     id=segment.id,
                     ts=segment.ts,
                     summary=summary,
-                    participants=participants[:12],
-                    keywords=keywords[:12],
+                    participants=participants[: ARRAY_LIMITS["participants"]],
+                    keywords=keywords[: ARRAY_LIMITS["keywords"]],
                     salience=_clamp(raw.get("salience", 0.5), default=0.5),
                     source=source_id,
                 )
@@ -174,7 +175,9 @@ class Extractor:
         stamp = {"ts": ts} if ts is not None else {}
 
         for bucket, model in (("facts", Fact), ("prefs", Preference)):
-            for item in data.get(bucket) or []:
+            # The schema bounds these arrays; this slice covers a provider
+            # that ignores maxItems, so the loop failure cannot re-enter here.
+            for item in (data.get(bucket) or [])[: ARRAY_LIMITS[bucket]]:
                 if not isinstance(item, dict):
                     continue
                 try:
@@ -190,7 +193,7 @@ class Extractor:
                 except (ValidationError, KeyError, TypeError, ValueError):
                     continue
 
-        for item in data.get("entities") or []:
+        for item in (data.get("entities") or [])[: ARRAY_LIMITS["entities"]]:
             if not isinstance(item, dict):
                 continue
             try:
@@ -204,7 +207,7 @@ class Extractor:
             except (ValidationError, KeyError, TypeError, ValueError):
                 continue
 
-        for item in data.get("open_loops") or []:
+        for item in (data.get("open_loops") or [])[: ARRAY_LIMITS["open_loops"]]:
             if not isinstance(item, dict):
                 continue
             try:
