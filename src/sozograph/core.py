@@ -143,9 +143,21 @@ class SozoGraph:
                 # Tier 0 deduplication: show the model the vocabulary it already
                 # has so it reuses a key rather than coining a synonym. Read
                 # fresh each round so keys learned a moment ago are visible.
-                update = extractor.extract_segment(
-                    segment, known_keys=base.known_keys()
-                )
+                #
+                # One segment's extraction can fail on its own: a provider
+                # timeout under sustained load, or a completion the engine
+                # truncated mid-JSON on an unusually dense stretch. Losing the
+                # whole conversation's memory because segment 30 of 34 hiccuped
+                # is the wrong failure. Skip the segment, record it, and keep
+                # the passport built so far -- the same "keep what finished"
+                # contract the benchmark runner already honours per conversation.
+                try:
+                    update = extractor.extract_segment(
+                        segment, known_keys=base.known_keys()
+                    )
+                except Exception as exc:  # noqa: BLE001 - provider/decoding failure is opaque here
+                    _record_segment_failure(base, segment, exc)
+                    continue
                 base, stats = merge_passport_update(base, **_update_kwargs(update))
                 stats_list.append(stats)
         else:
@@ -209,6 +221,22 @@ _SOURCE_KINDS = frozenset(
 
 def _source_kind(interaction_type: str) -> str:
     return interaction_type if interaction_type in _SOURCE_KINDS else "unknown"
+
+
+def _record_segment_failure(base: Passport, segment: Any, exc: Exception) -> None:
+    """
+    Note a skipped segment on the passport so the loss is auditable, not silent.
+
+    A dropped segment is real data loss; it belongs in the record next to the
+    dedupe audit, where a caller inspecting the passport can see it happened and
+    why, rather than discovering a hole by its absence.
+    """
+    failures = base.meta.setdefault("ingest_failures", [])
+    failures.append({
+        "segment": getattr(segment, "id", None),
+        "ts": getattr(getattr(segment, "ts", None), "isoformat", lambda: None)(),
+        "error": f"{type(exc).__name__}: {exc}"[:300],
+    })
 
 
 def _update_kwargs(update: dict[str, Any]) -> dict[str, Any]:

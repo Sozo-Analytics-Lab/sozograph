@@ -130,6 +130,30 @@ def test_full_ingest_builds_a_usable_passport(graph):
     assert (changes[0].old, changes[0].new) == ("Harare", "Kwekwe")
 
 
+def test_one_segments_failure_does_not_lose_the_conversation():
+    """A provider that raises on one segment skips it and keeps the rest."""
+
+    class FlakyProvider(FakeProvider):
+        def complete_json(self, *, system, user, schema, temperature=0.2):
+            if "kwekwe" in user.lower():
+                raise RuntimeError("simulated truncated-JSON / provider timeout")
+            return super().complete_json(
+                system=system, user=user, schema=schema, temperature=temperature
+            )
+
+    graph = SozoGraph(provider=FlakyProvider())
+    passport = graph.ingest(CONVERSATION)
+
+    # The surviving segments still built a usable passport...
+    assert passport.facts
+    assert any(f.key == "kitchen_colour" for f in passport.facts)
+    # ...the failed segment did not land...
+    assert not any(f.value == "Kwekwe" for f in passport.facts)
+    # ...and the loss is auditable, not silent.
+    failures = passport.meta.get("ingest_failures")
+    assert failures and "simulated" in failures[0]["error"]
+
+
 def test_batching_costs_one_call_per_segment(graph):
     passport = graph.ingest(CONVERSATION)
     interactions, _ = coerce_to_interactions(CONVERSATION)
