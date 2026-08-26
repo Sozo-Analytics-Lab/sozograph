@@ -195,12 +195,12 @@ The atomic observation layer **doubled accuracy** (13.22% → 26.67%) at one ele
 
 The first is the backbone. full_context reaches only 49% on this 8B; GPT-4o-mini scores ~73% on LightMem's own table. Much of the residual is the model, not the architecture. That is a tailwind. SozoGraph is a thin, portable layer over whatever model you bring, so every stronger model lifts it for free, no reindex and no migration.
 
-The second is our own optimization roadmap, each item holding the portability line (pydantic records, pure-Python ranking, no vectors, no weights):
+The second was our own optimization roadmap, each item holding the portability line (pydantic records, pure-Python ranking, no vectors, no weights). All four are landed:
 
-- **Temporal.** An observation's timestamp is when it was discussed, not when the event happened. Give observations an event date the extractor already resolves in prose, so temporal queries can filter and sort on it.
-- **Multi-hop.** A list answer needs the union of several observations; BM25 surfaces the best-matching one. Expand retrieval by entity: when a question names a person or thing, pull every observation about it, then rank.
-- **Disambiguation.** When many similar observations exist, use the question's date and entity constraints to rank the right one, not just lexical overlap.
-- **Clean abstention.** On thin context the weak model sometimes emits a stray token instead of "Not mentioned"; a tightened answer prompt removes the noise.
+- **Multi-hop.** When a question names a person or thing, every observation about it joins the retrieval pool before ranking (`rank_expanded` in `retrieve.py`), so a list answer can draw on records sharing no word with the question.
+- **Temporal.** Observations carry an event date (`when`), resolved from relative dates by the extractor. A temporal query renders the recall layer as a sorted timeline with dates shown.
+- **Disambiguation.** Near-duplicate observations merge only on a conjunction of evidence (token overlap plus shared participants plus same event date); anything less keeps both records.
+- **Clean abstention.** The benchmark answer prompt pins the exact refusal string, removing stray-token noise from grading.
 
 Read 26.67% as directional. The architecture is now sound enough that the next honest number needs a stronger backbone behind it.
 
@@ -223,7 +223,7 @@ Both are good at the same job. The difference is what you have to install and wh
 
 ```json
 {
-  "version": "2.0",
+  "version": "2.1",
   "updated_at": "2026-03-11T09:04:00+00:00",
   "user_key": "u_123",
   "facts": [
@@ -247,13 +247,17 @@ Both are good at the same job. The difference is what you have to install and wh
      "salience": 0.8, "source": "seg_a1b2",
      "participants": ["Melanie"], "keywords": ["kwekwe", "job"]}
   ],
+  "observations": [
+    {"text": "Melanie adopted Oliver from the Kwekwe shelter.",
+     "ts": "...", "when": "2026-01-04", "source": "seg_a1b2", "participants": ["Melanie"]}
+  ],
   "sources": [
     {"id": "seg_a1b2", "kind": "chat", "ts": "...", "hash": "sha256:..."}
   ]
 }
 ```
 
-Changes are resolved by time. The newest value wins, and the change is recorded rather than discarded, so you can see what your agent used to believe.
+Changes are resolved by time. The newest value wins, and the change is recorded rather than discarded, so you can see what your agent used to believe. Observations are the one append-only section: they record what was seen and are never overwritten, only deduplicated.
 
 ## Determinism
 
@@ -266,7 +270,7 @@ The same inputs produce the same passport. Identifiers are SHA-256 of the conten
 | `SOZOGRAPH_PROVIDER` | auto | `"openai"`, `"anthropic:claude-opus-5"`, ... |
 | `SOZOGRAPH_MODEL` | per provider | Override the model |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | | Whichever is set is used |
-| `SOZOGRAPH_DEFAULT_CONTEXT_BUDGET` | `3000` | Characters per rendered context |
+| `SOZOGRAPH_DEFAULT_CONTEXT_BUDGET` | `6000` | Characters per rendered context |
 | `SOZOGRAPH_MAX_INTERACTION_CHARS` | `4000` | Truncation before extraction |
 | `SOZOGRAPH_ENABLE_FALLBACK_SUMMARIZER` | `true` | Summarize unreadable database objects |
 

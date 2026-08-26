@@ -7,10 +7,11 @@ it, which meant every format change had to be made twice by hand.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .retrieve import rank
+from .retrieve import rank, rank_expanded
 from .schema import (
     Contradiction,
     Entity,
@@ -122,6 +123,42 @@ def _bounds(passport: Passport) -> tuple:
     return max(stamps), min(stamps)
 
 
+#: Queries whose intent is temporal ("when did the hike happen", "what happened
+#: in July 2023"). When one is detected, the recalled details are rendered in
+#: event-date order, so the model reads a timeline instead of a relevance list.
+_TIME_QUERY_RE = re.compile(
+    r"\b(19|20)\d{2}\b"
+    r"|\b(january|february|march|april|may|june|july|august|september|october|november|december)\b"
+    r"|\bwhen\b|\bhow long\b|\bhow old\b|what day|which day|what time|what year",
+    re.IGNORECASE,
+)
+
+
+def _wants_chronology(query: str | None) -> bool:
+    return bool(query) and bool(_TIME_QUERY_RE.search(query))
+
+
+def _obs_date_key(o: Observation) -> str:
+    """Event date when known, else discussion time."""
+    return o.when or o.ts.date().isoformat()
+
+
+def _entity_vocabulary(passport: Passport) -> list[str]:
+    """
+    Every name a query might mention, for entity-expanded retrieval.
+
+    Entity names and aliases plus observation participants. Plain strings,
+    matched on word boundaries; no model call, no dependency.
+    """
+    vocab: list[str] = []
+    for e in passport.entities:
+        vocab.append(e.name)
+        vocab.extend(e.aliases)
+    for o in passport.observations:
+        vocab.extend(o.participants)
+    return vocab
+
+
 def _select(items: list[Any], query: str | None, prior, limit: int,
             text_of) -> list[Any]:
     """
@@ -165,10 +202,19 @@ def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> li
         caps.entities,
         text_of=lambda e: e.search_text(),
     )
-    observations: list[Observation] = _select(
-        passport.observations, query, t_prior, caps.observations,
-        text_of=lambda o: o.search_text(),
-    )
+    observations: list[Observation] = [
+        s.item
+        for s in rank_expanded(
+            passport.observations,
+            query,
+            text_of=lambda o: o.search_text(),
+            limit=caps.observations,
+            prior=t_prior,
+            vocabulary=_entity_vocabulary(passport),
+        )
+    ]
+    if _wants_chronology(query):
+        observations = sorted(observations, key=_obs_date_key)
     episodes: list[Episode] = _select(
         passport.episodes,
         query,
@@ -196,7 +242,9 @@ def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> li
     section("Preferences:",
             [f"- {normalize_key(p.key)}: {_val_to_str(p.value)}" for p in prefs])
     section("Details recalled:",
-            [f"- {_val_to_str(o.text, max_len=300)}" for o in observations])
+            [f"- [{_obs_date_key(o)}] {_val_to_str(o.text, max_len=300)}"
+             if o.when else f"- {_val_to_str(o.text, max_len=300)}"
+             for o in observations])
     section("Key entities:",
             [f"- {e.name} ({e.type})" if e.type and e.type != "other" else f"- {e.name}"
              for e in entities])
@@ -215,7 +263,7 @@ def export_context(
     passport: Passport,
     *,
     query: str | None = None,
-    budget_chars: int = 3000,
+    budget_chars: int = 6000,
     header: str = "SOZOGRAPH PASSPORT",
     caps: Caps | None = None,
 ) -> str:
@@ -233,7 +281,7 @@ def export_context(
     hide the bone") is usually answered from here, not from the belief-state
     facts, so it is ranked against the query and trimmed late.
     """
-    budget_chars = max(400, int(budget_chars or 3000))
+    budget_chars = max(400, int(budget_chars or 6000))
     current = caps or Caps()
 
     lines = _build(passport, current, query, header)

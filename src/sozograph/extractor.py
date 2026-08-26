@@ -236,7 +236,11 @@ class Extractor:
             try:
                 out["observations"].append(
                     Observation(
-                        text=item["text"], source=source_id, participants=who, **stamp
+                        text=item["text"],
+                        when=item.get("when", "") or "",
+                        source=source_id,
+                        participants=who,
+                        **stamp,
                     )
                 )
             except (ValidationError, KeyError, TypeError, ValueError):

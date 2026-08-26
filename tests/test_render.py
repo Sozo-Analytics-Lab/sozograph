@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sozograph.render import export_context
+from sozograph.render import Caps, export_context
 from sozograph.schema import (
     Contradiction,
     Entity,
@@ -199,3 +199,71 @@ def test_observations_survive_a_tight_budget_when_relevant():
         )
     txt = export_context(p, query="which language is Tim learning", budget_chars=1500)
     assert "German" in txt
+
+
+def test_entity_expansion_surfaces_the_whole_subject():
+    """A multi-hop list question needs every observation about its subject,
+    including ones sharing no distinctive word with the query."""
+    p = Passport()
+    p.entities.append(Entity(name="Tim", type="person"))
+    # Ten Tim observations, most lexically unrelated to "summer activities".
+    tim_lines = [
+        "Tim kayaked the river gorge",
+        "Tim is learning German for his semester in Galway",
+        "Tim adopted a border collie named Oliver",
+        "Tim rebuilt the deck railing himself",
+        "Tim plays goalkeeper on the office five-a-side team",
+        "Tim quit caffeine in March and regrets nothing",
+        "Tim's sourdough starter survived three weeks away",
+        "Tim fixed the office espresso machine twice",
+        "Tim cycled two hundred kilometres last month",
+        "Tim is reading a biography of Roald Amundsen",
+    ]
+    for line in tim_lines:
+        p.observations.append(
+            Observation(text=line, ts=dt("2026-01-10T00:00:00Z"), source="t0")
+        )
+    # Noise floor above the observation cap so a cut definitely happens.
+    for i in range(60):
+        p.observations.append(
+            Observation(text=f"unrelated chatter item {i} about the neighbours",
+                        ts=dt("2026-02-03T10:00:00Z"), source="t1")
+        )
+
+    txt = export_context(p, query="What did Tim do this summer?",
+                         budget_chars=30_000, caps=Caps(observations=20))
+    recalled = [line for line in txt.splitlines()
+                if line.startswith("- ") and "Tim" in line]
+    assert len(recalled) >= 8
+
+
+def test_observation_event_date_is_annotated_and_sorted():
+    """Temporal queries read a timeline: event dates shown, ordered."""
+    p = Passport()
+    p.observations.append(
+        Observation(text="Melanie ran the charity race",
+                    ts=dt("2026-02-01T00:00:00Z"), source="t0",
+                    when="2026-05-21")
+    )
+    p.observations.append(
+        Observation(text="Melanie adopted Oliver from the shelter",
+                    ts=dt("2026-01-15T00:00:00Z"), source="t0",
+                    when="2026-01-04")
+    )
+    p.observations.append(
+        Observation(text="Melanie repainted the kitchen sage green",
+                    ts=dt("2026-03-01T00:00:00Z"), source="t0",
+                    when="2026-03-12")
+    )
+
+    txt = export_context(p, query="when did Melanie adopt Oliver?", budget_chars=6_000)
+    lines = [line for line in txt.splitlines() if line.startswith("- [")]
+    dates = [line.split("]")[0][2:] for line in lines]
+    assert dates == sorted(dates)
+    assert "[2026-01-04]" in txt
+
+    # Without temporal intent, relevance order stays.
+    txt2 = export_context(p, query="kitchen colour", budget_chars=6_000)
+    assert "[2026-03-12]" in txt2
+    first = next(line for line in txt2.splitlines() if line.startswith("- "))
+    assert "sage green" in first

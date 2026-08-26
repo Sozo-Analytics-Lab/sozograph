@@ -165,9 +165,16 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                     "text": {
                         "type": "string",
                         "description": "One self-contained statement, understandable alone.",
-                    }
+                    },
+                    "when": {
+                        "type": "string",
+                        "description": (
+                            "ISO date (YYYY-MM-DD) of when this happened, resolved "
+                            "from TIMESTAMP and the text. Empty string if unclear."
+                        ),
+                    },
                 },
-                "required": ["text"],
+                "required": ["text", "when"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["observations"],

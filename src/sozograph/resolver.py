@@ -8,9 +8,11 @@ and the behaviour auditable.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 from .dedupe import DedupeReport, Verdict, find_match
+from .retrieve import tokenize
 from .schema import (
     Contradiction,
     Entity,
@@ -223,33 +225,84 @@ def _observation_key(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
 
 
+@lru_cache(maxsize=8192)
+def _content_tokens(text: str) -> frozenset[str]:
+    """Content tokens of a statement, cached: the near-dup scan is O(n) per
+    incoming observation over the whole existing set."""
+    return frozenset(tokenize(text))
+
+
+def _jaccard(a: frozenset[str], b: frozenset[str]) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    return inter / (len(a) + len(b) - inter)
+
+
+def _shares_participant(a: Observation, b: Observation) -> bool:
+    left = {p.lower() for p in a.participants}
+    right = {p.lower() for p in b.participants}
+    if not left and not right:
+        return True
+    return bool(left & right)
+
+
+#: A paraphrase duplicate is only ever skipped on a conjunction of evidence.
+#: Token overlap alone would fold "Melanie hiked Kalambo Falls" into "Melanie
+#: hiked Nyika plateau" at 0.75; the participant and date guards are what make
+#: the skip safe. Carrying a duplicate stays the cheaper error.
+_NEAR_DUP_JACCARD = 0.85
+
+
 def _add_observation(existing: list[Observation], incoming: Observation) -> bool:
     """
-    Append an observation unless the identical statement is already held.
+    Append an observation unless the same statement is already held.
 
     Observations are append-only: there is no belief to overwrite, only a
-    record of what was seen. The only merge is exact-text deduplication, so
+    record of what was seen. Exact-text duplicates merge outright, so
     re-ingesting the same conversation does not double the recall layer.
-    Participants union when the same statement recurs with new names attached.
+    A near-duplicate (near-identical token set) merges only with the same
+    participants and the same event date; anything less keeps both records,
+    since a false skip deletes real recall and an extra record costs one
+    ranking slot. Participants union when a statement recurs with new names
+    attached.
     """
     key = _observation_key(incoming.text)
     if not key:
         return False
+
+    inc_tokens = _content_tokens(key)
+    inc_date = incoming.when or incoming.ts.date().isoformat()
     for obs in existing:
-        if _observation_key(obs.text) == key:
-            merged = list(obs.participants)
-            seen = {p.lower() for p in merged}
-            for p in incoming.participants:
-                if p.lower() not in seen:
-                    seen.add(p.lower())
-                    merged.append(p)
-            obs.participants = merged
+        obs_key = _observation_key(obs.text)
+        if obs_key == key:
+            _union_participants(obs, incoming)
             if incoming.ts < obs.ts:
                 obs.ts = incoming.ts
                 obs.source = incoming.source
             return False
+        # Near-duplicate guard: high token overlap AND shared participants
+        # AND the same event date. Single evidence never merges.
+        if (
+            _jaccard(inc_tokens, _content_tokens(obs_key)) >= _NEAR_DUP_JACCARD
+            and _shares_participant(obs, incoming)
+            and (obs.when or obs.ts.date().isoformat()) == inc_date
+        ):
+            _union_participants(obs, incoming)
+            return False
+
     existing.append(incoming)
     return True
+
+
+def _union_participants(obs: Observation, incoming: Observation) -> None:
+    merged = list(obs.participants)
+    seen = {p.lower() for p in merged}
+    for p in incoming.participants:
+        if p.lower() not in seen:
+            seen.add(p.lower())
+            merged.append(p)
+    obs.participants = merged
 
 
 def merge_passport_update(

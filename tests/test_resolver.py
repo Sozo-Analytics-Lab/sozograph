@@ -158,3 +158,67 @@ def test_observations_are_append_only_with_text_dedupe():
     kept = next(o for o in out.observations if "bone" in o.text.lower())
     assert set(p.lower() for p in kept.participants) == {"melanie", "oliver"}
     assert kept.ts == dt("2026-02-01T09:00:00Z")  # earliest observation wins
+
+
+def _merge_obs(p: Passport, text: str, **kw):
+    out, stats = merge_passport_update(
+        p, observations=[Observation(text=text, source=kw.pop("source", "t"), **kw)]
+    )
+    return out, stats
+
+
+def test_near_duplicate_merges_on_full_conjunction():
+    """Same participants AND same event date AND near-identical tokens -> skip."""
+    p = Passport()
+    p, _ = _merge_obs(
+        p, "Melanie hiked the trail to the waterfall overlook",
+        ts=dt("2026-05-01T10:00:00Z"), source="t1",
+        participants=["Melanie"], when="2026-04-18",
+    )
+    p, stats = _merge_obs(
+        p, "Melanie hiked the waterfall overlook trail",
+        ts=dt("2026-05-20T10:00:00Z"), source="t2",
+        participants=["Melanie"], when="2026-04-18",
+    )
+    assert len(p.observations) == 1
+    assert stats.observations_added == 0
+
+
+def test_near_duplicate_with_different_date_is_kept():
+    """Same words about a different day are two events, not a duplicate."""
+    p = Passport()
+    p, _ = _merge_obs(
+        p, "Melanie hiked the trail to the waterfall overlook",
+        ts=dt("2026-05-01T10:00:00Z"), source="t1", when="2026-04-18",
+    )
+    p, stats = _merge_obs(
+        p, "Melanie hiked the waterfall overlook trail",
+        ts=dt("2026-06-01T10:00:00Z"), source="t2", when="2026-05-30",
+    )
+    assert len(p.observations) == 2
+    assert stats.observations_added == 1
+
+
+def test_near_duplicate_without_participant_evidence_is_kept():
+    """High token overlap alone never merges; a false skip deletes real recall."""
+    p = Passport()
+    p, _ = _merge_obs(
+        p, "Melanie hiked the trail to the waterfall overlook",
+        ts=dt("2026-05-01T10:00:00Z"), source="t1",
+    )
+    p, stats = _merge_obs(
+        p, "Melanie hiked the waterfall overlook trail",
+        ts=dt("2026-05-20T10:00:00Z"), source="t2",
+        participants=["Caroline"],
+    )
+    assert len(p.observations) == 2
+    assert stats.observations_added == 1
+
+
+def test_observation_when_normalizes_or_drops():
+    ok = Observation(text="x", source="s", when="April 18, 2026")
+    assert ok.when == "2026-04-18"
+    junk = Observation(text="x", source="s", when="sometime last spring")
+    assert junk.when == ""
+    empty = Observation(text="x", source="s", when="")
+    assert empty.when == ""

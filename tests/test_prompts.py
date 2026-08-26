@@ -40,6 +40,10 @@ def test_every_extraction_array_is_bounded():
     for name in arrays:
         assert EXTRACTION_SCHEMA["properties"][name]["maxItems"] == ARRAY_LIMITS[name]
 
+    # Observation statements carry a resolved event date alongside the text.
+    obs_items = EXTRACTION_SCHEMA["properties"]["observations"]["items"]
+    assert set(obs_items["required"]) == {"text", "when"}
+
     episode = EXTRACTION_SCHEMA["properties"]["episode"]
     for name in ("participants", "keywords"):
         assert episode["properties"][name]["maxItems"] == ARRAY_LIMITS[name]

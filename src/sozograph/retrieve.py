@@ -137,6 +137,74 @@ def rank(
     return scored[:limit] if limit is not None else scored
 
 
+_NAME_BOUND_RE_TMPL = r"(?<![a-z0-9]){}(?![a-z0-9])"
+
+
+def match_names(query: str, vocabulary: Iterable[str]) -> list[str]:
+    """
+    Which known names appear in the query, on word boundaries.
+
+    A list question ("What did Tim do this summer?") names its subject. Pure
+    string matching over the passport's entity names, aliases, and record
+    participants finds that subject with no model call and no dependency.
+    Names shorter than two characters are ignored so stray initials cannot
+    hijack the expansion.
+    """
+    q = (query or "").lower()
+    if not q:
+        return []
+    found: list[str] = []
+    seen: set[str] = set()
+    for name in vocabulary:
+        n = (name or "").strip().lower()
+        if len(n) < 2 or n in seen:
+            continue
+        seen.add(n)
+        if re.search(_NAME_BOUND_RE_TMPL.format(re.escape(n)), q):
+            found.append(n)
+    return found
+
+
+def rank_expanded(
+    items: Sequence[Any],
+    query: str | None,
+    *,
+    text_of: Callable[[Any], str],
+    limit: int | None = None,
+    prior: Callable[[Any], float] | None = None,
+    vocabulary: Iterable[str] | None = None,
+) -> list[Scored]:
+    """
+    BM25 ranking widened by named-entity recall.
+
+    Lexical top-k alone answers "find the observation matching these words".
+    A multi-hop list question needs the union of everything about its subject,
+    including records sharing no distinctive word with the query ("What did
+    Tim do this summer?" must also surface "Tim kayaked the river gorge",
+    which says nothing about summers). When the query names a known entity,
+    every record mentioning it joins the candidate pool; the combined pool is
+    then ranked by the same BM25-plus-prior score and cut to `limit`, so the
+    widening changes membership without ever growing the rendered section.
+    """
+    scored = rank(items, query, text_of=text_of, limit=None, prior=prior)
+    if not scored or not query or not vocabulary:
+        return scored[:limit] if limit is not None else scored
+
+    names = match_names(query, vocabulary)
+    if not names:
+        return scored[:limit] if limit is not None else scored
+
+    keep = {s.index for s in scored[:limit]} if limit is not None else {s.index for s in scored}
+    for i, item in enumerate(items):
+        if i not in keep:
+            text = text_of(item).lower()
+            if any(n in text for n in names):
+                keep.add(i)
+
+    expanded = [s for s in scored if s.index in keep]
+    return expanded[:limit] if limit is not None else expanded
+
+
 def top_items(
     items: Sequence[Any],
     query: str | None,

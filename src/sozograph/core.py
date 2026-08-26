@@ -16,9 +16,9 @@ from .utils import sha256_json, stable_id
 
 def _default_context_budget() -> int:
     try:
-        return int(os.getenv("SOZOGRAPH_DEFAULT_CONTEXT_BUDGET", "3000"))
+        return int(os.getenv("SOZOGRAPH_DEFAULT_CONTEXT_BUDGET", "6000"))
     except ValueError:
-        return 3000
+        return 6000
 
 
 class SozoGraph:

@@ -27,7 +27,10 @@ You answer questions about a conversation using only the information provided.
 Rules:
 - Answer in as few words as possible. A date, a name, or a short phrase.
 - Do not explain your reasoning and do not restate the question.
-- If the information is genuinely not present, say "Not mentioned".
+- If the information is genuinely not present in the context, reply with the
+  exact string "Not mentioned" and nothing else. No preamble, no synonyms:
+  "unknown", "I don't know", "not stated", and "the context does not say" are
+  all wrong; only "Not mentioned" counts.
 - Prefer the most recent information when something changed over time.
 """.strip()
 

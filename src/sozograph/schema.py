@@ -170,8 +170,33 @@ class Observation(BaseModel):
 
     text: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
+    #: When the event happened, as an ISO date, resolved from the text by the
+    #: extractor. Empty when the statement carries no date. This is event time,
+    #: which is what a temporal question asks about; `ts` is discussion time,
+    #: the segment the statement was extracted from.
+    when: str = ""
     source: str = Field(..., min_length=1)
     participants: list[str] = Field(default_factory=list)
+
+    @field_validator("when")
+    @classmethod
+    def _norm_when(cls, v: str) -> str:
+        """Normalize to an ISO date string, or drop whatever cannot be one."""
+        s = (v or "").strip()
+        if not s:
+            return ""
+        candidates = [s.replace("Z", "+00:00")]
+        # Weaker models write prose dates; accept the common shapes before
+        # giving up, since an unparseable date silently loses event time.
+        for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y", "%Y/%m/%d", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(s, fmt).date().isoformat()
+            except ValueError:
+                pass
+        try:
+            return datetime.fromisoformat(candidates[0]).date().isoformat()
+        except ValueError:
+            return ""
 
     @field_validator("participants")
     @classmethod
@@ -188,11 +213,13 @@ class Observation(BaseModel):
 
     def search_text(self) -> str:
         """Everything worth matching a query against."""
-        parts = [self.text, " ".join(self.participants)]
+        parts = [self.text, self.when, " ".join(self.participants)]
         return " ".join(p for p in parts if p)
 
     def to_compact(self) -> dict[str, Any]:
         d: dict[str, Any] = {"text": self.text, "ts": _iso(self.ts), "source": self.source}
+        if self.when:
+            d["when"] = self.when
         if self.participants:
             d["participants"] = list(self.participants)
         return d
@@ -457,7 +484,7 @@ class Passport(BaseModel):
         self,
         *,
         query: str | None = None,
-        budget_chars: int = 3000,
+        budget_chars: int = 6000,
         header: str = "SOZOGRAPH PASSPORT",
     ) -> str:
         """
