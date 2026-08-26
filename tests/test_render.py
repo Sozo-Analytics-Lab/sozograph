@@ -237,6 +237,34 @@ def test_entity_expansion_surfaces_the_whole_subject():
     assert len(recalled) >= 8
 
 
+def test_entity_expansion_beats_the_cap_against_higher_scoring_noise():
+    """The subject's records must survive the cut even when lexically stronger
+    off-subject records would otherwise fill it. This fails on plain BM25 top-k;
+    only lifting the named subject above the cut passes it."""
+    p = Passport()
+    p.entities.append(Entity(name="Tim", type="person"))
+    # Three on-subject records that never mention the query's strong terms.
+    for line in ("Tim kayaked the river gorge",
+                 "Tim rebuilt the deck railing",
+                 "Tim adopted a border collie"):
+        p.observations.append(
+            Observation(text=line, ts=dt("2026-01-10T00:00:00Z"), source="t0",
+                        participants=["Tim"])
+        )
+    # Ten off-subject records that match the query's strong terms strongly, so
+    # a pure BM25 top-5 is entirely these and excludes every Tim record.
+    for i in range(10):
+        p.observations.append(
+            Observation(text=f"the summer beach holiday itinerary draft {i}",
+                        ts=dt("2026-02-03T10:00:00Z"), source="t1")
+        )
+
+    txt = export_context(p, query="What did Tim do on his summer beach holiday?",
+                         budget_chars=30_000, caps=Caps(observations=5))
+    for line in ("kayaked", "deck railing", "border collie"):
+        assert line in txt, f"entity expansion did not surface: {line}"
+
+
 def test_observation_event_date_is_annotated_and_sorted():
     """Temporal queries read a timeline: event dates shown, ordered."""
     p = Passport()

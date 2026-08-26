@@ -165,6 +165,13 @@ def match_names(query: str, vocabulary: Iterable[str]) -> list[str]:
     return found
 
 
+#: How much naming the query's subject lifts a record. Larger than any possible
+#: BM25-plus-prior score (BM25 is normalized to 1.0, the prior adds at most
+#: `prior_weight`), so every record about the named subject sorts above every
+#: record that is not, while BM25 still orders within each group.
+_ENTITY_MATCH_BONUS = 10.0
+
+
 def rank_expanded(
     items: Sequence[Any],
     query: str | None,
@@ -182,9 +189,15 @@ def rank_expanded(
     including records sharing no distinctive word with the query ("What did
     Tim do this summer?" must also surface "Tim kayaked the river gorge",
     which says nothing about summers). When the query names a known entity,
-    every record mentioning it joins the candidate pool; the combined pool is
-    then ranked by the same BM25-plus-prior score and cut to `limit`, so the
-    widening changes membership without ever growing the rendered section.
+    every record mentioning it is lifted above the records that do not, so the
+    whole subject survives the cap cut. BM25 still orders within each group, so
+    the widening changes which records survive `limit` without ever growing the
+    rendered section.
+
+    Lifting, not merely adding to a candidate set: ranking the union by score
+    and cutting to `limit` would return the same top-`limit` as plain `rank`,
+    because a low-BM25 record about the subject loses its slot to a higher-BM25
+    record right back. The bonus is what makes the subject's records win the cut.
     """
     scored = rank(items, query, text_of=text_of, limit=None, prior=prior)
     if not scored or not query or not vocabulary:
@@ -194,15 +207,13 @@ def rank_expanded(
     if not names:
         return scored[:limit] if limit is not None else scored
 
-    keep = {s.index for s in scored[:limit]} if limit is not None else {s.index for s in scored}
-    for i, item in enumerate(items):
-        if i not in keep:
-            text = text_of(item).lower()
-            if any(n in text for n in names):
-                keep.add(i)
-
-    expanded = [s for s in scored if s.index in keep]
-    return expanded[:limit] if limit is not None else expanded
+    lifted: list[Scored] = []
+    for s in scored:
+        hit = any(n in text_of(items[s.index]).lower() for n in names)
+        bonus = _ENTITY_MATCH_BONUS if hit else 0.0
+        lifted.append(Scored(index=s.index, score=s.score + bonus, item=s.item))
+    lifted.sort(key=lambda s: (-s.score, s.index))
+    return lifted[:limit] if limit is not None else lifted
 
 
 def top_items(
