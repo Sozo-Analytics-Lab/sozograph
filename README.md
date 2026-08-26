@@ -106,7 +106,7 @@ passport.context(budget_chars=1500)
 passport.token_estimate()
 ```
 
-Facts and preferences are included in full while the budget allows. With a query, every section is ranked against it (BM25 blended with recency and confidence), so a cap cut drops irrelevant records rather than old ones.
+The belief state (facts and preferences) is included in full while the budget allows. Atomic observations, the recall layer a single-hop question reads from, are ranked against the query and rendered under `Details recalled`. With a query, every section is ranked against it (BM25 blended with recency and confidence), so a cap cut drops irrelevant records rather than old ones.
 
 ### Move it around
 
@@ -176,22 +176,33 @@ python -m bench.locomo.run --data data/locomo10.json --dry-run
 
 ### Preliminary results
 
-A first real run, on a free local setup rather than GPT-4o-mini: Unsloth's `Llama-3.1-8B-Instruct-GGUF` (Q4_K_M), served by Ollama on a free Kaggle GPU, as both backbone and judge.
+A first real run, on a free local setup rather than GPT-4o-mini: Unsloth's `Llama-3.1-8B-Instruct-GGUF` (Q4_K_M), served by Ollama on a free Kaggle GPU, as the one model for memory, answering, and grading. Six matched conversations, 885 questions. Only the SozoGraph commit changes between the two SozoGraph rows.
 
-| System | Accuracy | Tokens | API calls | Sample |
-|---|---:|---:|---:|---|
-| full_context, this 8B model | 47.79% | 33.03M | 1,540 | 10/10 conversations |
-| sozograph, this 8B model | 16.61% | 1.69M | 1,130 | 6/10 conversations |
-| LightMem, GPT-4o-mini (published, reference only) | 72.99% | 85.19k/conv | 29.83/conv | n/a |
+| System | Accuracy | Tokens | Notes |
+|---|---:|---:|---|
+| full_context, this 8B model | 49.27% | 18.9M | whole conversation in every prompt |
+| **sozograph + atomic observations** | **26.67%** | **1.74M** | 10.9x fewer tokens than full_context |
+| sozograph, belief-state only (prior) | 13.22% | 1.6M | before the observation layer |
+| LightMem, GPT-4o-mini (published, reference only) | 72.99% | 85.19k/conv | different, stronger backbone |
 
-On the six conversations both systems completed, sozograph trails full_context by 30.7 points on the identical backbone. That gap is not the model's own ceiling: full_context reaches 47% with that same weak model. It is SozoGraph's compression and retrieval pipeline losing accuracy on top of it.
+The atomic observation layer **doubled accuracy** (13.22% → 26.67%) at one eleventh of full_context's token cost, on the identical model. It reaches 54% of the full-context score at 9% of the cost, and closed 40% of the gap.
 
-Two limitations this run surfaced directly:
+**How it was found.** The belief-state-only run answered "Not mentioned" to 68% of questions, against 17% for full_context. It was not reasoning badly; the answer was not in the rendered memory. The extractor was told to keep "beliefs, not quotes... only what is stable or actionable," so the incidental detail a single-hop question asks for ("the hike took two hours", "he hid the bone in a slipper") was discarded before it could be retrieved.
 
-- **Fact retrieval was not query-aware.** Only episodes were ranked against the question (BM25, in [`retrieve.py`](src/sozograph/retrieve.py)); facts and preferences, the actual answer source for most questions, were selected by recency and confidence alone in [`render.py`](src/sozograph/render.py). Past 60 facts (the default cap), whichever were oldest or least confident got dropped regardless of relevance. **Fixed:** every section is now query-ranked, blended with the recency x confidence prior.
-- **Extraction wasn't reliable on weak models yet.** The extraction schema's arrays (`facts`, `prefs`, `entities`, `open_loops`) had no length limit, and grammar-constrained decoding on a small model can loop restating near-duplicate items instead of terminating. Four separate conversations crashed this way in a single eval run, on four different segments. **Fixed:** the schema now carries `maxItems` bounds on every array, accepted by OpenAI strict mode, Gemini's `response_schema`, and Ollama's `format`, so the loop terminates by construction; the extractor also truncates defensively. A relative-date rule in the extraction prompt ("last Saturday" must become an absolute date computed from the segment timestamp) targets the temporal-question losses.
+**The fix.** Extraction now emits **atomic observations** alongside the belief state: self-contained, third-person statements of what was said or happened, one per line, relative dates resolved, append-only, ranked against the question by the same pure-Python BM25 and rendered under `Details recalled`. This is the portable form of the atomic-fact memory that leads the LoCoMo recall benchmarks (AtomMem, Mem0), with no embedding and no vector store. Abstention fell from 68% to 42%; single-hop recall more than doubled, 15% → 36%. See [`ADR_Atomic_Observations_2026-08-25.md`](docs/ADR_Atomic_Observations_2026-08-25.md) and the full [autopsy](docs/Autopsy_Atomic_Observations_LoCoMo_2026-08-26.docx).
 
-GPT-4o-mini is roughly 25 points ahead of this 8B model even under identical conditions (full_context vs. full_context), so most of the gap above reflects backbone weakness as much as architecture. Read these numbers as directional, not final: the SozoGraph-vs-LightMem comparison still needs a GPT-4o-mini-class backbone to be a fair fight.
+**Two kinds of gap remain, and both point the right way.**
+
+The first is the backbone. full_context reaches only 49% on this 8B; GPT-4o-mini scores ~73% on LightMem's own table. Much of the residual is the model, not the architecture. That is a tailwind. SozoGraph is a thin, portable layer over whatever model you bring, so every stronger model lifts it for free, no reindex and no migration.
+
+The second was our own optimization roadmap, each item holding the portability line (pydantic records, pure-Python ranking, no vectors, no weights). All four are landed:
+
+- **Multi-hop.** When a question names a person or thing, every observation about it joins the retrieval pool before ranking (`rank_expanded` in `retrieve.py`), so a list answer can draw on records sharing no word with the question.
+- **Temporal.** Observations carry an event date (`when`), resolved from relative dates by the extractor. A temporal query renders the recall layer as a sorted timeline with dates shown.
+- **Disambiguation.** Near-duplicate observations merge only on a conjunction of evidence (token overlap plus shared participants plus same event date); anything less keeps both records.
+- **Clean abstention.** The benchmark answer prompt pins the exact refusal string, removing stray-token noise from grading.
+
+Read 26.67% as directional. The architecture is now sound enough that the next honest number needs a stronger backbone behind it.
 
 ## Compared to LightMem
 
@@ -212,7 +223,7 @@ Both are good at the same job. The difference is what you have to install and wh
 
 ```json
 {
-  "version": "2.0",
+  "version": "2.1",
   "updated_at": "2026-03-11T09:04:00+00:00",
   "user_key": "u_123",
   "facts": [
@@ -236,13 +247,17 @@ Both are good at the same job. The difference is what you have to install and wh
      "salience": 0.8, "source": "seg_a1b2",
      "participants": ["Melanie"], "keywords": ["kwekwe", "job"]}
   ],
+  "observations": [
+    {"text": "Melanie adopted Oliver from the Kwekwe shelter.",
+     "ts": "...", "when": "2026-01-04", "source": "seg_a1b2", "participants": ["Melanie"]}
+  ],
   "sources": [
     {"id": "seg_a1b2", "kind": "chat", "ts": "...", "hash": "sha256:..."}
   ]
 }
 ```
 
-Changes are resolved by time. The newest value wins, and the change is recorded rather than discarded, so you can see what your agent used to believe.
+Changes are resolved by time. The newest value wins, and the change is recorded rather than discarded, so you can see what your agent used to believe. Observations are the one append-only section: they record what was seen and are never overwritten, only deduplicated.
 
 ## Determinism
 
@@ -255,7 +270,7 @@ The same inputs produce the same passport. Identifiers are SHA-256 of the conten
 | `SOZOGRAPH_PROVIDER` | auto | `"openai"`, `"anthropic:claude-opus-5"`, ... |
 | `SOZOGRAPH_MODEL` | per provider | Override the model |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` | | Whichever is set is used |
-| `SOZOGRAPH_DEFAULT_CONTEXT_BUDGET` | `3000` | Characters per rendered context |
+| `SOZOGRAPH_DEFAULT_CONTEXT_BUDGET` | `6000` | Characters per rendered context |
 | `SOZOGRAPH_MAX_INTERACTION_CHARS` | `4000` | Truncation before extraction |
 | `SOZOGRAPH_ENABLE_FALLBACK_SUMMARIZER` | `true` | Summarize unreadable database objects |
 

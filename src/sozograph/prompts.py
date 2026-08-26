@@ -7,32 +7,50 @@ from .schema import ENTITY_TYPES
 EXTRACTOR_SYSTEM_PROMPT = """
 You are the SozoGraph extractor.
 
-You convert interaction text into a compact, structured belief-state update.
+You convert interaction text into a compact, structured memory update with two
+layers: a small belief state and a set of atomic observations.
 
 Core philosophy:
-- Extract beliefs, not quotes.
-- Separate facts (what is true now) from preferences (what the person likes or wants).
+- Facts are the belief state: stable truths, one per key, that later overwrite
+  each other when they change (role, location, tools owned, project status).
+- Preferences are what the person likes or wants (tone, style, constraints).
+- Observations are the recall layer: atomic, concrete details of what was said
+  or happened that a fact would throw away but a later question may ask for
+  ("Oliver hid his bone in Melanie's slipper", "the trail hike took two hours",
+  "Tim is learning German"). Capture these generously. They are the difference
+  between remembering that someone exists and remembering what they told you.
 - Track entities (people, projects, orgs, tools, places) and their aliases.
 - Capture open loops (unresolved questions, pending tasks, missing information).
-- Write one episode summarizing what happened, so a later question about
-  this stretch of conversation can still be answered.
-- When a value changes, emit the new value. The system resolves contradictions itself.
+- Write one episode summarizing what happened across this stretch.
+- When a fact's value changes, emit the new value. The system resolves
+  contradictions itself.
 
-Rules:
+Rules for facts and preferences:
 - Reuse a key from KNOWN KEYS whenever the new information belongs to it. Inventing a
   synonym for a key that already exists fragments the memory and is the single most
   damaging thing you can do here.
 - Keys are short, lowercase, snake_case.
 - Confidence is 0 to 1. Use lower confidence when inferring rather than reading.
-- Be conservative. Include only what is stable or actionable.
+- Be conservative here. A fact is something that stays true; put one-off detail
+  in observations instead, not in facts.
+
+Rules for observations:
+- Each observation is ONE self-contained statement, written in the third person,
+  understandable with no other context. Resolve every pronoun to a named person
+  ("she" -> "Melanie") before writing it.
+- Prefer many small observations over one dense sentence. Split "they hiked for
+  two hours and saw a rainbow" into two observations.
+- Cover the concrete specifics: events, places, quantities, choices, quotes,
+  plans, one-off details. Skip only pure greetings and filler with no content.
+- Do not restate a fact or preference you already emitted; observations are for
+  what the belief state cannot hold.
+
+Rules for everything:
 - Never invent detail that is not present in the text.
-- Do not extract transient chatter, greetings, or one-off small talk as facts.
-- The episode summary is different: it records what was discussed, including
-  specifics such as names, places, numbers, and dates that would otherwise
-  be lost. Write it so it stands alone without the original text.
 - The TIMESTAMP above is "now". Resolve every relative date or duration in the
   text ("yesterday", "last Saturday", "in two weeks") into an absolute calendar
-  date computed from that timestamp before writing it anywhere.
+  date computed from that timestamp before writing it anywhere, in observations
+  and the episode summary alike.
 """.strip()
 
 
@@ -50,6 +68,7 @@ ARRAY_LIMITS: dict[str, int] = {
     "prefs": 16,
     "entities": 12,
     "open_loops": 10,
+    "observations": 30,
     "aliases": 6,
     "participants": 8,
     "keywords": 10,
@@ -133,6 +152,33 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             },
             "maxItems": ARRAY_LIMITS["open_loops"],
         },
+        "observations": {
+            "type": "array",
+            "description": (
+                "Atomic, self-contained details of what was said or happened, "
+                "one statement each, third person, pronouns and relative dates "
+                "resolved. The recall layer a later question reads from."
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "One self-contained statement, understandable alone.",
+                    },
+                    "when": {
+                        "type": "string",
+                        "description": (
+                            "ISO date (YYYY-MM-DD) of when this happened, resolved "
+                            "from TIMESTAMP and the text. Empty string if unclear."
+                        ),
+                    },
+                },
+                "required": ["text", "when"],
+                "additionalProperties": False,
+            },
+            "maxItems": ARRAY_LIMITS["observations"],
+        },
         "episode": {
             "type": "object",
             "description": (
@@ -162,7 +208,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
         },
     },
-    "required": ["facts", "prefs", "entities", "open_loops", "episode"],
+    "required": ["facts", "prefs", "entities", "open_loops", "observations", "episode"],
     "additionalProperties": False,
 }
 
@@ -175,7 +221,8 @@ TIMESTAMP: {ts_iso}
 TEXT:
 {interaction_text}
 
-Extract the stable, useful updates from this text, and summarize what happened.
+Extract the belief-state updates, the atomic observations, and a summary of
+what happened. Be generous with observations: they are what a later question reads.
 """.strip()
 
 

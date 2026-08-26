@@ -17,7 +17,7 @@ from .prompts import (
 )
 from .providers.base import LLMProvider
 from .retrieve import keywords_from
-from .schema import Entity, Episode, Fact, OpenLoop, Preference
+from .schema import Entity, Episode, Fact, Observation, OpenLoop, Preference
 from .utils import normalize_key, stable_id
 
 _BARE_LITERALS = {"true": True, "false": False, "null": None, "none": None}
@@ -120,7 +120,10 @@ class Extractor:
             temperature=0.2,
         )
         source_id = stable_id("seg_", segment.id)
-        update = self.validate(payload, source_id=source_id, ts=segment.ts)
+        update = self.validate(
+            payload, source_id=source_id, ts=segment.ts,
+            participants=segment.participants,
+        )
         update["episodes"] = self._episode(payload, segment, source_id)
         return update
 
@@ -157,22 +160,32 @@ class Extractor:
         except (ValidationError, TypeError, ValueError):
             return []
 
-    def validate(self, data: dict, *, source_id: str, ts: Any = None) -> dict[str, list]:
+    def validate(
+        self,
+        data: dict,
+        *,
+        source_id: str,
+        ts: Any = None,
+        participants: list[str] | None = None,
+    ) -> dict[str, list]:
         """
         Validate and normalize a raw extraction payload.
 
         Timestamps come from the interaction, never from the model. The model
         cannot know when something happened outside the text it was given, and
-        asking it to guess produced items the schema then rejected.
+        asking it to guess produced items the schema then rejected. Observation
+        participants come from the segment for the same reason: the model only
+        supplies the statement text, so it cannot pad the array into a loop.
         """
         out: dict[str, list] = {
             "facts": [], "prefs": [], "entities": [],
-            "open_loops": [], "episodes": [],
+            "open_loops": [], "observations": [], "episodes": [],
         }
         if not isinstance(data, dict):
             return out
 
         stamp = {"ts": ts} if ts is not None else {}
+        who = list(participants or [])
 
         for bucket, model in (("facts", Fact), ("prefs", Preference)):
             # The schema bounds these arrays; this slice covers a provider
@@ -212,6 +225,24 @@ class Extractor:
                 continue
             try:
                 out["open_loops"].append(OpenLoop(item=item["item"], source=source_id, **stamp))
+            except (ValidationError, KeyError, TypeError, ValueError):
+                continue
+
+        # The schema bounds this array; the slice covers a provider that ignores
+        # maxItems, so a runaway array cannot re-enter here either.
+        for item in (data.get("observations") or [])[: ARRAY_LIMITS["observations"]]:
+            if not isinstance(item, dict):
+                continue
+            try:
+                out["observations"].append(
+                    Observation(
+                        text=item["text"],
+                        when=item.get("when", "") or "",
+                        source=source_id,
+                        participants=who,
+                        **stamp,
+                    )
+                )
             except (ValidationError, KeyError, TypeError, ValueError):
                 continue
 

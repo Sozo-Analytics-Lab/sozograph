@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from sozograph.resolver import merge_passport_update
-from sozograph.schema import Entity, Fact, OpenLoop, Passport, Preference
+from sozograph.schema import Entity, Fact, Observation, OpenLoop, Passport, Preference
 
 
 def dt(s: str) -> datetime:
@@ -132,3 +132,93 @@ def test_open_loop_dedupe():
     assert len(out.open_loops) == 1
     assert out.open_loops[0].source == "t2"
     assert stats.open_loops_added == 1
+
+
+def test_observations_are_append_only_with_text_dedupe():
+    base = Passport()
+    first = [
+        Observation(text="Oliver hid his bone in the slipper",
+                    ts=dt("2026-02-02T10:00:00Z"), source="t1", participants=["Melanie"]),
+        Observation(text="The hike took two hours",
+                    ts=dt("2026-02-02T10:00:00Z"), source="t1"),
+    ]
+    out, stats = merge_passport_update(base, observations=first)
+    assert len(out.observations) == 2
+    assert stats.observations_added == 2
+
+    # Re-ingesting the same statement (whitespace/case differ) does not duplicate
+    # it; participants union and the earliest timestamp is kept.
+    again = [
+        Observation(text="  oliver hid his BONE in the slipper ",
+                    ts=dt("2026-02-01T09:00:00Z"), source="t2", participants=["Oliver"]),
+    ]
+    out, stats = merge_passport_update(out, observations=again)
+    assert len(out.observations) == 2
+    assert stats.observations_added == 0
+    kept = next(o for o in out.observations if "bone" in o.text.lower())
+    assert set(p.lower() for p in kept.participants) == {"melanie", "oliver"}
+    assert kept.ts == dt("2026-02-01T09:00:00Z")  # earliest observation wins
+
+
+def _merge_obs(p: Passport, text: str, **kw):
+    out, stats = merge_passport_update(
+        p, observations=[Observation(text=text, source=kw.pop("source", "t"), **kw)]
+    )
+    return out, stats
+
+
+def test_near_duplicate_merges_on_full_conjunction():
+    """Same participants AND same event date AND near-identical tokens -> skip."""
+    p = Passport()
+    p, _ = _merge_obs(
+        p, "Melanie hiked the trail to the waterfall overlook",
+        ts=dt("2026-05-01T10:00:00Z"), source="t1",
+        participants=["Melanie"], when="2026-04-18",
+    )
+    p, stats = _merge_obs(
+        p, "Melanie hiked the waterfall overlook trail",
+        ts=dt("2026-05-20T10:00:00Z"), source="t2",
+        participants=["Melanie"], when="2026-04-18",
+    )
+    assert len(p.observations) == 1
+    assert stats.observations_added == 0
+
+
+def test_near_duplicate_with_different_date_is_kept():
+    """Same words about a different day are two events, not a duplicate."""
+    p = Passport()
+    p, _ = _merge_obs(
+        p, "Melanie hiked the trail to the waterfall overlook",
+        ts=dt("2026-05-01T10:00:00Z"), source="t1", when="2026-04-18",
+    )
+    p, stats = _merge_obs(
+        p, "Melanie hiked the waterfall overlook trail",
+        ts=dt("2026-06-01T10:00:00Z"), source="t2", when="2026-05-30",
+    )
+    assert len(p.observations) == 2
+    assert stats.observations_added == 1
+
+
+def test_near_duplicate_without_participant_evidence_is_kept():
+    """High token overlap alone never merges; a false skip deletes real recall."""
+    p = Passport()
+    p, _ = _merge_obs(
+        p, "Melanie hiked the trail to the waterfall overlook",
+        ts=dt("2026-05-01T10:00:00Z"), source="t1",
+    )
+    p, stats = _merge_obs(
+        p, "Melanie hiked the waterfall overlook trail",
+        ts=dt("2026-05-20T10:00:00Z"), source="t2",
+        participants=["Caroline"],
+    )
+    assert len(p.observations) == 2
+    assert stats.observations_added == 1
+
+
+def test_observation_when_normalizes_or_drops():
+    ok = Observation(text="x", source="s", when="April 18, 2026")
+    assert ok.when == "2026-04-18"
+    junk = Observation(text="x", source="s", when="sometime last spring")
+    assert junk.when == ""
+    empty = Observation(text="x", source="s", when="")
+    assert empty.when == ""
