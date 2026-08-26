@@ -440,6 +440,44 @@ def test_gemini_gives_up_after_max_rate_limit_retries(fake_gemini_flaky):
     assert len(sleeps) == 30
 
 
+def test_gemini_fails_fast_on_spend_cap_429(monkeypatch, captured):
+    """A billing spend-cap 429 will not clear by waiting, so it must not be
+    retried 30 times (observed live: a 3-hour retry storm, zero conversations)."""
+    state = {"calls": 0}
+
+    class Models:
+        def generate_content(self, **kw):
+            state["calls"] += 1
+            exc = Exception(
+                "429 RESOURCE_EXHAUSTED. Your billing account has exceeded its "
+                "monthly spending cap. Please go to AI Studio to manage billing."
+            )
+            exc.code = 429
+            raise exc
+
+    class Client:
+        def __init__(self, **kw):
+            self.models = Models()
+
+    google = _module("google")
+    genai = _module("google.genai", Client=Client)
+    gtypes = _module("google.genai.types",
+                     GenerateContentConfig=lambda **kw: types.SimpleNamespace(**kw))
+    google.genai = genai
+    genai.types = gtypes
+    monkeypatch.setitem(sys.modules, "google", google)
+    monkeypatch.setitem(sys.modules, "google.genai", genai)
+    monkeypatch.setitem(sys.modules, "google.genai.types", gtypes)
+    sleeps: list[float] = []
+    monkeypatch.setattr("time.sleep", lambda s: sleeps.append(s))
+
+    p = get_provider("gemini:gemini-3.1-flash-lite", api_key="k")
+    with pytest.raises(Exception, match="spending cap"):
+        p.complete_json(system="s", user="u", schema=SCHEMA)
+    assert state["calls"] == 1  # no retries
+    assert sleeps == []
+
+
 def test_gemini_retries_on_server_overload_then_succeeds(fake_gemini_flaky):
     # 503 UNAVAILABLE ("high demand") has no RetryInfo in the body, unlike 429;
     # this must fall back to exponential backoff rather than crash on a missing

@@ -25,6 +25,30 @@ _DEFAULT_RETRY_DELAY_SECONDS = 5.0
 _BACKOFF_BASE_SECONDS = 10.0
 _BACKOFF_MAX_SECONDS = 60.0
 
+# Not every 429 is a rolling per-minute throttle. A billing spend-cap or a
+# per-day quota is a hard wall that will not clear until a human raises the cap
+# or the day rolls over, so retrying it 30 times is 3 hours of guaranteed
+# failure -- observed live: a run stormed on "billing account has exceeded its
+# monthly spending cap" for the full session and completed zero conversations.
+# Fail fast on these; keep retrying the per-minute variety, which does clear.
+_NON_TRANSIENT_429_MARKERS = (
+    "spending cap",
+    "spend cap",
+    "billing account",
+    "billing",
+    "perday",       # quotaId GenerateRequestsPerDayPerProjectPerModel
+    "per day",
+    "per-day",
+)
+
+
+def _is_non_transient_429(exc: Exception) -> bool:
+    """A 429 that no amount of waiting will clear inside this run."""
+    if getattr(exc, "code", None) != 429:
+        return False
+    blob = f"{getattr(exc, 'message', '') or ''} {exc}".lower()
+    return any(marker in blob for marker in _NON_TRANSIENT_429_MARKERS)
+
 
 def _retry_delay_seconds(exc: Exception, attempt: int) -> float:
     """
@@ -92,8 +116,10 @@ class GeminiProvider(LLMProvider):
                     model=self.model, contents=contents, config=config
                 )
             except Exception as exc:
-                if getattr(exc, "code", None) not in _RETRYABLE_CODES or (
-                    attempt >= _MAX_RATE_LIMIT_RETRIES
+                if (
+                    getattr(exc, "code", None) not in _RETRYABLE_CODES
+                    or attempt >= _MAX_RATE_LIMIT_RETRIES
+                    or _is_non_transient_429(exc)
                 ):
                     raise
                 time.sleep(_retry_delay_seconds(exc, attempt))
