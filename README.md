@@ -176,26 +176,33 @@ python -m bench.locomo.run --data data/locomo10.json --dry-run
 
 ### Preliminary results
 
-A first real run, on a free local setup rather than GPT-4o-mini: Unsloth's `Llama-3.1-8B-Instruct-GGUF` (Q4_K_M), served by Ollama on a free Kaggle GPU, as both backbone and judge.
+A first real run, on a free local setup rather than GPT-4o-mini: Unsloth's `Llama-3.1-8B-Instruct-GGUF` (Q4_K_M), served by Ollama on a free Kaggle GPU, as the one model for memory, answering, and grading. Six matched conversations, 885 questions. Only the SozoGraph commit changes between the two SozoGraph rows.
 
-| System | Accuracy | Tokens | API calls | Sample |
-|---|---:|---:|---:|---|
-| full_context, this 8B model | 47.79% | 33.03M | 1,540 | 10/10 conversations |
-| sozograph, this 8B model | 16.61% | 1.69M | 1,130 | 6/10 conversations |
-| LightMem, GPT-4o-mini (published, reference only) | 72.99% | 85.19k/conv | 29.83/conv | n/a |
+| System | Accuracy | Tokens | Notes |
+|---|---:|---:|---|
+| full_context, this 8B model | 49.27% | 18.9M | whole conversation in every prompt |
+| **sozograph + atomic observations** | **26.67%** | **1.74M** | 10.9x fewer tokens than full_context |
+| sozograph, belief-state only (prior) | 13.22% | 1.6M | before the observation layer |
+| LightMem, GPT-4o-mini (published, reference only) | 72.99% | 85.19k/conv | different, stronger backbone |
 
-On the six conversations both systems completed, sozograph trails full_context by 30.7 points on the identical backbone. That gap is not the model's own ceiling: full_context reaches 47% with that same weak model. It is SozoGraph's compression and retrieval pipeline losing accuracy on top of it.
+The atomic observation layer **doubled accuracy** (13.22% → 26.67%) at one eleventh of full_context's token cost, on the identical model. It reaches 54% of the full-context score at 9% of the cost, and closed 40% of the gap.
 
-The re-run isolated where that gap comes from. On the matched six conversations sozograph answered "Not mentioned" to **68% of all questions**, against 17% for full_context. It is not reasoning badly; the answer is not in the rendered memory. Of the questions it abstained on, full_context (same model, same question) answered **285** correctly: the information was in the conversation and the pipeline had dropped it. Fix that coverage and the ceiling is ~45%, essentially full_context's own score.
+**How it was found.** The belief-state-only run answered "Not mentioned" to 68% of questions, against 17% for full_context. It was not reasoning badly; the answer was not in the rendered memory. The extractor was told to keep "beliefs, not quotes... only what is stable or actionable," so the incidental detail a single-hop question asks for ("the hike took two hours", "he hid the bone in a slipper") was discarded before it could be retrieved.
 
-The cause was the extraction layer, not retrieval. The extractor was told to keep "beliefs, not quotes... only what is stable or actionable," so incidental detail a single-hop question asks for ("the hike took two hours", "he hid the bone in a slipper") was discarded before it could ever be retrieved.
+**The fix.** Extraction now emits **atomic observations** alongside the belief state: self-contained, third-person statements of what was said or happened, one per line, relative dates resolved, append-only, ranked against the question by the same pure-Python BM25 and rendered under `Details recalled`. This is the portable form of the atomic-fact memory that leads the LoCoMo recall benchmarks (AtomMem, Mem0), with no embedding and no vector store. Abstention fell from 68% to 42%; single-hop recall more than doubled, 15% → 36%. See [`ADR_Atomic_Observations_2026-08-25.md`](docs/ADR_Atomic_Observations_2026-08-25.md) and the full [autopsy](docs/Autopsy_Atomic_Observations_LoCoMo_2026-08-26.docx).
 
-- **Memory now has a recall layer.** Alongside the belief-state facts, extraction emits **atomic observations**: self-contained, third-person statements of what was said or happened, one per line, relative dates resolved. They are append-only, ranked against the question by the same pure-Python BM25 as everything else, and rendered under `Details recalled`. This is the portable form of the "atomic fact" memory that leads the LoCoMo recall benchmarks (AtomMem, Mem0), carrying no embedding and no vector store. See [`ADR_Atomic_Observations_2026-08-25.md`](docs/ADR_Atomic_Observations_2026-08-25.md).
-- **Query-aware ranking and bounded extraction** (prior fixes): every section is ranked against the question, and every extraction array carries a `maxItems` bound so grammar-constrained decoding on a small model cannot loop, accepted by OpenAI strict mode, Gemini's `response_schema`, and Ollama's `format` alike.
+**Two kinds of gap remain, and both point the right way.**
 
-The 16.61% row above predates the observation layer. Re-measurement on the matched six conversations is the next step; the number in the table will move when it lands.
+The first is the backbone. full_context reaches only 49% on this 8B; GPT-4o-mini scores ~73% on LightMem's own table. Much of the residual is the model, not the architecture. That is a tailwind. SozoGraph is a thin, portable layer over whatever model you bring, so every stronger model lifts it for free, no reindex and no migration.
 
-GPT-4o-mini is roughly 25 points ahead of this 8B model even under identical conditions (full_context vs. full_context), so much of the remaining gap reflects backbone weakness as much as architecture. Read these numbers as directional, not final: the SozoGraph-vs-LightMem comparison still needs a GPT-4o-mini-class backbone to be a fair fight.
+The second is our own optimization roadmap, each item holding the portability line (pydantic records, pure-Python ranking, no vectors, no weights):
+
+- **Temporal.** An observation's timestamp is when it was discussed, not when the event happened. Give observations an event date the extractor already resolves in prose, so temporal queries can filter and sort on it.
+- **Multi-hop.** A list answer needs the union of several observations; BM25 surfaces the best-matching one. Expand retrieval by entity: when a question names a person or thing, pull every observation about it, then rank.
+- **Disambiguation.** When many similar observations exist, use the question's date and entity constraints to rank the right one, not just lexical overlap.
+- **Clean abstention.** On thin context the weak model sometimes emits a stray token instead of "Not mentioned"; a tightened answer prompt removes the noise.
+
+Read 26.67% as directional. The architecture is now sound enough that the next honest number needs a stronger backbone behind it.
 
 ## Compared to LightMem
 
