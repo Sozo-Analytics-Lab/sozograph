@@ -278,6 +278,18 @@ The same inputs produce the same passport. Identifiers are SHA-256 of the conten
 
 See [MIGRATING.md](MIGRATING.md). `ingest()` now returns a Passport rather than a tuple, and 0.1.x extraction silently discarded most of what it extracted, so expect noticeably fuller passports.
 
+## Examples
+
+[Recipe Mentor](https://github.com/rapha18th/recipe-mentor) is a full
+worked application: a "Collaborative Partner" agent that walks a builder
+through a real ML production recipe across two different projects, and
+recalls what tripped the user up on one, unprompted, when they start the
+other — persistent memory (a Passport), deterministic cross-session recall
+with no vector store, and a real LLM judge. Kept as its own repo rather
+than in-tree, since it pulls in dependencies (an agent framework, a cloud
+persistence layer, ML training libraries) that have nothing to do with
+what SozoGraph itself needs to run.
+
 ## Development
 
 ```bash
