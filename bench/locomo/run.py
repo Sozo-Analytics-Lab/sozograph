@@ -168,6 +168,14 @@ def main(argv: list[str] | None = None) -> int:
                             compact_after=args.compact,
                             provider_kwargs=provider_kwargs,
                         )
+                    elif system == "sozograph_v3":
+                        result = runner(
+                            conversation,
+                            model=args.provider,
+                            budget_chars=args.budget_chars,
+                            max_segment_tokens=args.segment_tokens,
+                            provider_kwargs=provider_kwargs,
+                        )
                     else:
                         result = runner(
                             conversation, model=args.provider, provider_kwargs=provider_kwargs

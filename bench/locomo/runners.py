@@ -161,7 +161,55 @@ def run_sozograph(
     return result
 
 
+def run_sozograph_v3(
+    conversation: Conversation,
+    *,
+    model: str,
+    budget_chars: int = 6000,
+    max_segment_tokens: int = 1500,
+    provider_kwargs: dict[str, Any] | None = None,
+) -> RunResult:
+    """Ingest into the Passport 3 event ledger, then answer from it.
+
+    Same measurement split as `run_sozograph`: memory-construction tokens on one
+    provider, question-answering on another. The ledger's own `context` renders a
+    policy-gated, BM25F-ranked slice, so this measures the v3 retrieval path, not
+    the v2 render.
+    """
+    result = RunResult(system="sozograph_v3", sample_id=conversation.sample_id)
+
+    memory_provider = get_provider(model, **(provider_kwargs or {}))
+    qa_provider = get_provider(model, **(provider_kwargs or {}))
+
+    started = time.perf_counter()
+    graph = SozoGraph(provider=memory_provider)
+    passport = graph.ingest_v3(
+        conversation.turns,
+        meta={"user_key": conversation.sample_id},
+        max_segment_tokens=max_segment_tokens,
+    )
+    result.memory_seconds = time.perf_counter() - started
+    result.memory_usage = memory_provider.usage
+    result.passport_tokens = max(1, len(passport.to_json(indent=None)) // 4)
+    records = passport.materialize()
+    kinds: dict[str, int] = {}
+    for record in records:
+        kinds[record.kind] = kinds.get(record.kind, 0) + 1
+    result.notes.update({"events": len(passport.events), "records": len(records), **kinds})
+
+    started = time.perf_counter()
+    for qa in conversation.qa:
+        context = passport.context(query=qa.question, budget_chars=budget_chars)
+        result.answers.append(
+            Answer(qa.question, qa.answer, _ask(qa_provider, context, qa.question), qa.category)
+        )
+    result.qa_seconds = time.perf_counter() - started
+    result.qa_usage = qa_provider.usage
+    return result
+
+
 RUNNERS = {
     "sozograph": run_sozograph,
+    "sozograph_v3": run_sozograph_v3,
     "full_context": run_full_context,
 }
