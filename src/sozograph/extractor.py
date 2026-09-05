@@ -54,6 +54,13 @@ def _clamp(value: Any, lo: float = 0.0, hi: float = 1.0, default: float = 0.7) -
         return default
 
 
+def _evidence_fields(item: dict[str, Any]) -> dict[str, str]:
+    quote = item.get("evidence_quote")
+    if not isinstance(quote, str) or not quote.strip():
+        return {}
+    return {"evidence_quote": quote.strip()}
+
+
 class Extractor:
     """
     Turns interactions into candidate memory updates.
@@ -200,6 +207,7 @@ class Extractor:
                             value=coerce_value(item.get("value")),
                             confidence=_clamp(item.get("confidence", 0.7)),
                             source=source_id,
+                            **_evidence_fields(item),
                             **stamp,
                         )
                     )
@@ -215,6 +223,7 @@ class Extractor:
                         name=item["name"],
                         type=item.get("type") or "other",
                         aliases=[a for a in (item.get("aliases") or []) if isinstance(a, str)],
+                        **_evidence_fields(item),
                     )
                 )
             except (ValidationError, KeyError, TypeError, ValueError):
@@ -224,7 +233,14 @@ class Extractor:
             if not isinstance(item, dict):
                 continue
             try:
-                out["open_loops"].append(OpenLoop(item=item["item"], source=source_id, **stamp))
+                out["open_loops"].append(
+                    OpenLoop(
+                        item=item["item"],
+                        source=source_id,
+                        **_evidence_fields(item),
+                        **stamp,
+                    )
+                )
             except (ValidationError, KeyError, TypeError, ValueError):
                 continue
 
@@ -240,6 +256,7 @@ class Extractor:
                         when=item.get("when", "") or "",
                         source=source_id,
                         participants=who,
+                        **_evidence_fields(item),
                         **stamp,
                     )
                 )

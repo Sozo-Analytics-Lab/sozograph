@@ -47,6 +47,9 @@ Rules for observations:
 
 Rules for everything:
 - Never invent detail that is not present in the text.
+- For every extracted item, copy the shortest verbatim source substring that
+  supports it into evidence_quote. Preserve spelling and punctuation exactly.
+  Use an empty string only when no single substring supports a derived item.
 - The TIMESTAMP above is "now". Resolve every relative date or duration in the
   text ("yesterday", "last Saturday", "in two weeks") into an absolute calendar
   date computed from that timestamp before writing it anywhere, in observations
@@ -91,10 +94,14 @@ def _kv_item_schema() -> dict[str, Any]:
                 "type": "number",
                 "description": "0 to 1. Lower when inferred rather than stated.",
             },
+            "evidence_quote": {
+                "type": "string",
+                "description": "Shortest exact substring from TEXT that supports this item.",
+            },
         },
         # OpenAI strict mode requires every property listed in `required` and
         # additionalProperties false at every level.
-        "required": ["key", "value", "confidence"],
+        "required": ["key", "value", "confidence", "evidence_quote"],
         "additionalProperties": False,
     }
 
@@ -135,8 +142,12 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                         "items": {"type": "string"},
                         "maxItems": ARRAY_LIMITS["aliases"],
                     },
+                    "evidence_quote": {
+                        "type": "string",
+                        "description": "Shortest exact substring from TEXT naming this entity.",
+                    },
                 },
-                "required": ["name", "type", "aliases"],
+                "required": ["name", "type", "aliases", "evidence_quote"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["entities"],
@@ -146,8 +157,14 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "description": "Unresolved questions or pending tasks.",
             "items": {
                 "type": "object",
-                "properties": {"item": {"type": "string"}},
-                "required": ["item"],
+                "properties": {
+                    "item": {"type": "string"},
+                    "evidence_quote": {
+                        "type": "string",
+                        "description": "Shortest exact substring from TEXT supporting the loop.",
+                    },
+                },
+                "required": ["item", "evidence_quote"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["open_loops"],
@@ -173,8 +190,12 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                             "from TIMESTAMP and the text. Empty string if unclear."
                         ),
                     },
+                    "evidence_quote": {
+                        "type": "string",
+                        "description": "Shortest exact substring from TEXT supporting the detail.",
+                    },
                 },
-                "required": ["text", "when"],
+                "required": ["text", "when", "evidence_quote"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["observations"],

@@ -42,7 +42,7 @@ def test_every_extraction_array_is_bounded():
 
     # Observation statements carry a resolved event date alongside the text.
     obs_items = EXTRACTION_SCHEMA["properties"]["observations"]["items"]
-    assert set(obs_items["required"]) == {"text", "when"}
+    assert set(obs_items["required"]) == {"text", "when", "evidence_quote"}
 
     episode = EXTRACTION_SCHEMA["properties"]["episode"]
     for name in ("participants", "keywords"):

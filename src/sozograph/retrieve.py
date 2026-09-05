@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -97,6 +97,85 @@ class BM25:
                     continue
                 norm = 1.0 - B + B * (self.lengths[i] / self.avg_len or 0.0)
                 scores[i] += idf * (freq * (K1 + 1.0)) / (freq + K1 * norm)
+        return scores
+
+
+class BM25F:
+    """Field-aware BM25 for structured memory records.
+
+    Each field has its own weight and length normalization. For term ``t`` in
+    document ``d`` the combined field frequency is::
+
+        w_tf(t, d) = sum_f w_f * tf(t, d_f) /
+                     (1 - b_f + b_f * len(d_f) / avg_len_f)
+
+    The final contribution is::
+
+        idf(t) * w_tf(t, d) * (k1 + 1) / (k1 + w_tf(t, d))
+
+    This lets a match in a fact key carry more evidence than the same token in
+    free text. The implementation stays deterministic and dependency free.
+    """
+
+    def __init__(
+        self,
+        documents: Sequence[Mapping[str, str]],
+        *,
+        weights: Mapping[str, float] | None = None,
+        field_b: Mapping[str, float] | None = None,
+        k1: float = 1.2,
+    ):
+        self.documents = list(documents)
+        self.n = len(self.documents)
+        fields = sorted({field for doc in self.documents for field in doc})
+        self.weights = {field: float((weights or {}).get(field, 1.0)) for field in fields}
+        self.field_b = {field: float((field_b or {}).get(field, B)) for field in fields}
+        self.k1 = float(k1)
+
+        self.tokens: dict[str, list[list[str]]] = {
+            field: [tokenize(doc.get(field, "")) for doc in self.documents]
+            for field in fields
+        }
+        self.avg_len: dict[str, float] = {}
+        for field, rows in self.tokens.items():
+            self.avg_len[field] = (sum(len(row) for row in rows) / self.n) if self.n else 0.0
+
+        document_frequency: Counter = Counter()
+        for index in range(self.n):
+            terms: set[str] = set()
+            for field in fields:
+                terms.update(self.tokens[field][index])
+            document_frequency.update(terms)
+        self.idf = {
+            term: max(0.0, math.log(1.0 + (self.n - count + 0.5) / (count + 0.5)))
+            for term, count in document_frequency.items()
+        }
+
+    def score(self, query: str) -> list[float]:
+        terms = tokenize(query)
+        if not terms or not self.n:
+            return [0.0] * self.n
+
+        scores = [0.0] * self.n
+        for term in terms:
+            idf = self.idf.get(term)
+            if not idf:
+                continue
+            for index in range(self.n):
+                weighted_tf = 0.0
+                for field, rows in self.tokens.items():
+                    row = rows[index]
+                    frequency = row.count(term)
+                    if not frequency:
+                        continue
+                    average = self.avg_len[field]
+                    length_ratio = (len(row) / average) if average else 0.0
+                    norm = 1.0 - self.field_b[field] + self.field_b[field] * length_ratio
+                    weighted_tf += self.weights[field] * frequency / max(norm, 1e-12)
+                if weighted_tf:
+                    scores[index] += (
+                        idf * weighted_tf * (self.k1 + 1.0) / (self.k1 + weighted_tf)
+                    )
         return scores
 
 
