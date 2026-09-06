@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from sozograph.prompts import ARRAY_LIMITS, EXTRACTION_SCHEMA, EXTRACTOR_SYSTEM_PROMPT
+from sozograph.prompts import (
+    ARRAY_LIMITS,
+    EVIDENCE_LINK_SCHEMA,
+    EXTRACTION_SCHEMA,
+    EXTRACTOR_SYSTEM_PROMPT,
+)
 
 #: Keywords OpenAI strict mode accepts. maxItems is in the supported subset,
 #: so the array bounds stay portable across every provider dialect.
@@ -42,7 +47,7 @@ def test_every_extraction_array_is_bounded():
 
     # Observation statements carry a resolved event date alongside the text.
     obs_items = EXTRACTION_SCHEMA["properties"]["observations"]["items"]
-    assert set(obs_items["required"]) == {"text", "when", "evidence_quote"}
+    assert set(obs_items["required"]) == {"text", "when"}
 
     episode = EXTRACTION_SCHEMA["properties"]["episode"]
     for name in ("participants", "keywords"):
@@ -65,3 +70,11 @@ def test_schema_stays_inside_openai_strict_subset():
 def test_extractor_prompt_resolves_relative_dates():
     assert "TIMESTAMP" in EXTRACTOR_SYSTEM_PROMPT
     assert "absolute" in EXTRACTOR_SYSTEM_PROMPT.lower()
+
+
+def test_evidence_quotes_are_not_part_of_shared_extraction_contract():
+    assert "evidence_quote" not in EXTRACTOR_SYSTEM_PROMPT
+    assert "evidence_quote" not in str(EXTRACTION_SCHEMA)
+    assert set(EVIDENCE_LINK_SCHEMA["properties"]["links"]["items"]["required"]) == {
+        "candidate_id", "quote"
+    }

@@ -167,6 +167,36 @@ def test_policy_filters_before_search_and_context():
     assert "do-not-release" not in passport.context(query="secret", policy=policy)
 
 
+def test_temporal_context_orders_relevant_records_by_valid_time():
+    passport = _passport()
+    later = MemoryRecord(
+        kind="observation",
+        text="The second event happened.",
+        valid_time=TemporalInterval(
+            start=T0 + timedelta(days=2),
+            end=T0 + timedelta(days=3),
+            precision="day",
+        ),
+        recorded_at=T0,
+    )
+    earlier = MemoryRecord(
+        kind="observation",
+        text="The first event happened.",
+        valid_time=TemporalInterval(
+            start=T0 + timedelta(days=1),
+            end=T0 + timedelta(days=2),
+            precision="day",
+        ),
+        recorded_at=T0,
+    )
+    passport.append(later, occurred_at=T0)
+    passport.append(earlier, occurred_at=T0)
+
+    context = passport.context(query="When did each event happen?")
+    assert context.index("first event") < context.index("second event")
+    assert "valid=2026-01-02..2026-01-03" in context
+
+
 def test_bm25f_can_weight_keys_above_free_text():
     documents = [
         {"key": "location", "text": "general profile"},

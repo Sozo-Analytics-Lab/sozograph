@@ -2,7 +2,7 @@
 
 Portable JSON memory for LLM agents.
 
-Your agent's memory is a small JSON file. You can read it, diff it, email it, put it in Postgres, ship it to the browser. No vector database. No embedding model. No local weights.
+Your agent's memory is a small JSON file. You can read it, diff it, email it, put it in Postgres, ship it to the browser. No vector database or embedding model is required. Passport 3 can add a disposable semantic sidecar when paraphrase recall matters.
 
 ```bash
 pip install sozograph
@@ -125,6 +125,33 @@ merged.save("melanie.passport3.json")
 
 `SozoGraph.ingest()` remains the stable Passport 2.1 path. Use
 `Passport.to_v3()` for an offline snapshot upgrade.
+
+Passport 3 uses lean extraction by default. Exact evidence is anchored from the
+source after extraction. Use `evidence_linking="model"` when a governed ingest
+should make one bounded evidence-only call for unresolved candidates.
+
+### Optional semantic retrieval
+
+The vector index is a rebuildable sidecar. Every entry is keyed to the record ID,
+record revision hash, and embedding model ID. A stale revision cannot rank. Policy
+filtering runs before dense ranking.
+
+```python
+from sozograph import SemanticSidecar
+
+# `embedder` implements embed_query(), embed_documents(), and model_id.
+sidecar = SemanticSidecar.build(passport, embedder)
+records = sidecar.search_hybrid(passport, "Which physician did she mention?", embedder)
+
+# Refresh only changed revisions after more ingestion.
+sidecar.sync(passport, embedder)
+sidecar.save("melanie.passport3.vectors.json")
+```
+
+Hybrid search combines BM25F with semantic field vectors through weighted
+reciprocal rank fusion. Exact names, dates, and identifiers keep the lexical
+path. Paraphrases gain the dense path. The passport stays usable when the
+sidecar or embedding model is absent.
 
 ### Read
 

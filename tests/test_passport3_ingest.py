@@ -117,7 +117,47 @@ def test_direct_v3_ingest_emits_governed_events_with_exact_evidence():
         "exact_evidence": 2,
         "coarse_evidence": 0,
         "transaction_time": T0.isoformat(),
+        "evidence_linking": "deterministic",
+        "evidence_deterministic": 2,
+        "evidence_model_linked": 0,
+        "evidence_unresolved": 0,
     }
+
+
+def test_model_evidence_linker_only_handles_unresolved_candidates():
+    class LinkProvider(Passport3Provider):
+        def complete_json(self, *, system, user, schema, temperature=0.2):
+            if "links" in schema.get("properties", {}):
+                return {
+                    "links": [{
+                        "candidate_id": "observations:0",
+                        "quote": "Oliver hid his bone in Melanie's slipper",
+                    }]
+                }
+            payload = _empty_payload()
+            payload["facts"] = [{"key": "pet", "value": "Oliver", "confidence": 0.9}]
+            payload["observations"] = [{
+                "text": "The canine concealed its chew toy in the footwear.",
+                "when": "",
+            }]
+            return payload
+
+    source = "Oliver hid his bone in Melanie's slipper."
+    passport = SozoGraph(provider=LinkProvider()).ingest_v3(
+        {"text": source, "ts": T0.isoformat()},
+        batch=False,
+        transaction_time=T0,
+        evidence_linking="model",
+    )
+    observation = next(
+        record for record in passport.materialize() if record.kind == "observation"
+    )
+    assert observation.evidence[0].quote == "Oliver hid his bone in Melanie's slipper"
+    assert observation.evidence[0].verify(source)
+    stats = passport.extensions["sozograph:last_ingest"]
+    assert stats["evidence_deterministic"] == 1
+    assert stats["evidence_model_linked"] == 1
+    assert stats["evidence_unresolved"] == 0
 
 
 def test_direct_v3_replay_is_idempotent_even_with_a_new_transaction_time():

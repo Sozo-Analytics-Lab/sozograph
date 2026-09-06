@@ -1,6 +1,6 @@
 # Passport 3 Implementation Status
 
-Date: 5 September 2026
+Date: 6 September 2026
 
 The foundation and direct-ingestion tranches are complete. Passport 3 runs beside Passport 2.1. Existing ingest, save, load, render, and provider paths still pass their tests.
 
@@ -28,16 +28,22 @@ The foundation and direct-ingestion tranches are complete. Passport 3 runs besid
 - [x] Preserved future fields at their original level in Passport 2 and Passport 3 round trips.
 - [x] Exported the Passport 3 API from the package root.
 - [x] Added direct `SozoGraph.ingest_v3()` projection from validated extraction output.
-- [x] Added exact evidence-quote requests to the strict extraction schema.
-- [x] Added deterministic exact-span anchoring with coarse evidence fallback.
+- [x] Restored the lean shared extraction schema after the evidence-quote regression.
+- [x] Added deterministic exact-span anchoring with lexical clause alignment and coarse fallback.
+- [x] Added an optional bounded model pass for unresolved evidence only.
+- [x] Added valid-time timeline rendering for temporal questions.
+- [x] Added a disposable semantic sidecar keyed to record revision and embedding model.
+- [x] Added field-level normalized vectors and weighted MaxSim scoring.
+- [x] Added policy-first hybrid BM25F and semantic retrieval with reciprocal rank fusion.
+- [x] Added atomic semantic sidecar save, load, and incremental revision refresh.
 - [x] Added replay-safe semantic hashes and revision lineage.
 - [x] Added collision-resistant source identities for direct ingestion.
 - [x] Added source-registry union during replica merge.
-- [x] Added 27 Passport 3 invariant and integration tests.
+- [x] Added Passport 3, evidence-link, timeline, and semantic retrieval tests.
 
 ## Verified
 
-- [x] Full test suite: 188 passed.
+- [x] Full test suite: 197 passed.
 - [x] Live provider tests: 4 skipped because they require provider credentials.
 - [x] New and changed production code passes Ruff.
 - [x] Existing Passport 2 behavior remains green.
@@ -61,8 +67,9 @@ Logical record identity uses the SHA-256 digest of canonical identity fields. Re
 - [ ] Add calibrated contradiction and supersession policy.
 - [ ] Add asymmetric signatures and envelope encryption.
 - [ ] Add consent receipts, purpose binding, retention jobs, and user deletion workflows.
-- [ ] Add disposable graph and dense retrieval sidecars.
-- [ ] Add temporal query parsing and graph traversal.
+- [x] Add a disposable dense retrieval sidecar.
+- [x] Add first-pass temporal query detection and timeline rendering.
+- [ ] Add a disposable graph sidecar and graph traversal.
 - [ ] Add learned reranking and diversity selection.
 - [ ] Add importers and exporters for external memory systems.
 - [ ] Run LoCoMo, LongMemEval, and conflict-heavy portable memory evaluations.

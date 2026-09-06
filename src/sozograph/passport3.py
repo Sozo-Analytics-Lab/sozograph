@@ -19,6 +19,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .evidence import deterministic_quote
 from .retrieve import BM25F
 from .utils import normalize_key
 
@@ -41,6 +42,12 @@ EventOperation = Literal["upsert", "retract", "delete"]
 
 PASSPORT3_VERSION = "3.0"
 _SENSITIVITY_RANK = {"public": 0, "internal": 1, "confidential": 2, "restricted": 3}
+_TIME_QUERY_RE = re.compile(
+    r"\b(19|20)\d{2}\b"
+    r"|\b(january|february|march|april|may|june|july|august|september|october|november|december)\b"
+    r"|\bwhen\b|\bhow long\b|\bhow old\b|what day|which day|what time|what year",
+    re.IGNORECASE,
+)
 
 
 def _utcnow() -> datetime:
@@ -665,6 +672,42 @@ class MemoryPassport(PortableModel):
         )
         return [record for record, _ in ranked[: max(0, limit)]]
 
+    def timeline(
+        self,
+        query: str | None = None,
+        *,
+        limit: int = 50,
+        policy: AccessPolicy | None = None,
+        transaction_at: datetime | None = None,
+        valid_at: datetime | None = None,
+    ) -> list[MemoryRecord]:
+        """Return a relevance-filtered view in valid-time order."""
+        records = (
+            self.search(
+                query,
+                limit=limit,
+                policy=policy,
+                transaction_at=transaction_at,
+                valid_at=valid_at,
+            )
+            if query
+            else self.materialize(
+                transaction_at=transaction_at,
+                valid_at=valid_at,
+                policy=policy,
+            )[: max(0, limit)]
+        )
+        ceiling = datetime.max.replace(tzinfo=timezone.utc)
+        return sorted(
+            records,
+            key=lambda record: (
+                record.valid_time.start or ceiling,
+                record.valid_time.end or ceiling,
+                record.recorded_at,
+                record.id or "",
+            ),
+        )
+
     def context(
         self,
         *,
@@ -674,8 +717,17 @@ class MemoryPassport(PortableModel):
         transaction_at: datetime | None = None,
         valid_at: datetime | None = None,
     ) -> str:
+        wants_timeline = bool(query and _TIME_QUERY_RE.search(query))
         records = (
-            self.search(
+            self.timeline(
+                query,
+                limit=50,
+                policy=policy,
+                transaction_at=transaction_at,
+                valid_at=valid_at,
+            )
+            if wants_timeline
+            else self.search(
                 query,
                 limit=50,
                 policy=policy,
@@ -697,7 +749,12 @@ class MemoryPassport(PortableModel):
             label = f"{record.kind}:{record.key}" if record.key else record.kind
             content = record.text if record.text is not None else record.value
             rendered = json.dumps(content, ensure_ascii=False, default=str)
-            lines.append(f"- [{record.id}] {label} = {rendered}")
+            valid = ""
+            if wants_timeline and record.valid_time.start:
+                valid = f" valid={record.valid_time.start.date().isoformat()}"
+                if record.valid_time.end:
+                    valid += f"..{record.valid_time.end.date().isoformat()}"
+            lines.append(f"- [{record.id}]{valid} {label} = {rendered}")
         text = "\n".join(lines)
         budget = max(300, int(budget_chars))
         return text if len(text) <= budget else text[: budget - 1] + "…"
@@ -840,16 +897,15 @@ def _source_quote(source_text: str, candidates: list[str]) -> str | None:
 def _record_evidence(
     item: Any,
     *,
+    bucket: str,
     source_id: str,
     source_text: str,
     source_locator: str,
     fallback_candidates: list[str],
 ) -> tuple[list[EvidenceSpan], bool]:
-    supplied = getattr(item, "evidence_quote", None)
-    quote = _source_quote(
-        source_text,
-        [str(supplied or ""), *fallback_candidates],
-    )
+    quote = deterministic_quote(bucket, item, source_text)
+    if not quote:
+        quote = _source_quote(source_text, fallback_candidates)
     if quote:
         return [
             EvidenceSpan.from_text(
@@ -922,6 +978,7 @@ def project_extraction_update(
     for item in update.get("facts") or []:
         evidence, exact = _record_evidence(
             item,
+            bucket="facts",
             source_id=source_id,
             source_text=source_text,
             source_locator=locator,
@@ -944,6 +1001,7 @@ def project_extraction_update(
     for item in update.get("prefs") or []:
         evidence, exact = _record_evidence(
             item,
+            bucket="prefs",
             source_id=source_id,
             source_text=source_text,
             source_locator=locator,
@@ -974,6 +1032,7 @@ def project_extraction_update(
             )
         evidence, exact = _record_evidence(
             item,
+            bucket="observations",
             source_id=source_id,
             source_text=source_text,
             source_locator=locator,
@@ -1027,6 +1086,7 @@ def project_extraction_update(
     for item in update.get("open_loops") or []:
         evidence, exact = _record_evidence(
             item,
+            bucket="open_loops",
             source_id=source_id,
             source_text=source_text,
             source_locator=locator,
@@ -1047,6 +1107,7 @@ def project_extraction_update(
     for item in update.get("entities") or []:
         evidence, exact = _record_evidence(
             item,
+            bucket="entities",
             source_id=source_id,
             source_text=source_text,
             source_locator=locator,

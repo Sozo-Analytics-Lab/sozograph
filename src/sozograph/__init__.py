@@ -8,8 +8,9 @@ SozoGraph: portable JSON memory for LLM agents.
     print(passport.context(query="Where does Melanie live?"))
     passport.save("user.json")
 
-No vector database, no embedding model, no local weights. The memory is a small
-JSON file you can read, diff, email, and load anywhere.
+No vector database or embedding model is required. The canonical memory is a
+small JSON file you can read, diff, email, and load anywhere. An optional
+revision-bound semantic sidecar can improve paraphrase retrieval.
 """
 from __future__ import annotations
 
@@ -39,6 +40,7 @@ from .schema import (
     Preference,
     SourceRef,
 )
+from .semantic import EmbeddingBackend, SemanticSidecar, SyncStats
 
 __all__ = [
     "SozoGraph",
@@ -66,6 +68,9 @@ __all__ = [
     "PassportSignature",
     "canonical_json",
     "content_digest",
+    "EmbeddingBackend",
+    "SemanticSidecar",
+    "SyncStats",
 ]
 
 __version__ = "0.3.0"

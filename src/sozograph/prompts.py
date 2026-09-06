@@ -47,9 +47,6 @@ Rules for observations:
 
 Rules for everything:
 - Never invent detail that is not present in the text.
-- For every extracted item, copy the shortest verbatim source substring that
-  supports it into evidence_quote. Preserve spelling and punctuation exactly.
-  Use an empty string only when no single substring supports a derived item.
 - The TIMESTAMP above is "now". Resolve every relative date or duration in the
   text ("yesterday", "last Saturday", "in two weeks") into an absolute calendar
   date computed from that timestamp before writing it anywhere, in observations
@@ -94,14 +91,10 @@ def _kv_item_schema() -> dict[str, Any]:
                 "type": "number",
                 "description": "0 to 1. Lower when inferred rather than stated.",
             },
-            "evidence_quote": {
-                "type": "string",
-                "description": "Shortest exact substring from TEXT that supports this item.",
-            },
         },
         # OpenAI strict mode requires every property listed in `required` and
         # additionalProperties false at every level.
-        "required": ["key", "value", "confidence", "evidence_quote"],
+        "required": ["key", "value", "confidence"],
         "additionalProperties": False,
     }
 
@@ -142,12 +135,8 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                         "items": {"type": "string"},
                         "maxItems": ARRAY_LIMITS["aliases"],
                     },
-                    "evidence_quote": {
-                        "type": "string",
-                        "description": "Shortest exact substring from TEXT naming this entity.",
-                    },
                 },
-                "required": ["name", "type", "aliases", "evidence_quote"],
+                "required": ["name", "type", "aliases"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["entities"],
@@ -159,12 +148,8 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                 "type": "object",
                 "properties": {
                     "item": {"type": "string"},
-                    "evidence_quote": {
-                        "type": "string",
-                        "description": "Shortest exact substring from TEXT supporting the loop.",
-                    },
                 },
-                "required": ["item", "evidence_quote"],
+                "required": ["item"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["open_loops"],
@@ -190,12 +175,8 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                             "from TIMESTAMP and the text. Empty string if unclear."
                         ),
                     },
-                    "evidence_quote": {
-                        "type": "string",
-                        "description": "Shortest exact substring from TEXT supporting the detail.",
-                    },
                 },
-                "required": ["text", "when", "evidence_quote"],
+                "required": ["text", "when"],
                 "additionalProperties": False,
             },
             "maxItems": ARRAY_LIMITS["observations"],
@@ -232,6 +213,63 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
     "required": ["facts", "prefs", "entities", "open_loops", "observations", "episode"],
     "additionalProperties": False,
 }
+
+
+#: A separate, bounded evidence pass for Passport 3. The shared extractor stays
+#: lean. A caller can request this pass only for candidates whose source span
+#: cannot be found deterministically.
+EVIDENCE_LINK_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "links": {
+            "type": "array",
+            "maxItems": sum(
+                ARRAY_LIMITS[name]
+                for name in ("facts", "prefs", "entities", "open_loops", "observations")
+            ),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "candidate_id": {"type": "string"},
+                    "quote": {
+                        "type": "string",
+                        "description": (
+                            "Shortest exact substring from SOURCE that directly supports the candidate. "
+                            "Empty when no exact support exists."
+                        ),
+                    },
+                },
+                "required": ["candidate_id", "quote"],
+                "additionalProperties": False,
+            },
+        }
+    },
+    "required": ["links"],
+    "additionalProperties": False,
+}
+
+
+EVIDENCE_LINK_SYSTEM_PROMPT = """
+You link extracted memory candidates to exact source evidence.
+
+Rules:
+- Return one link for every candidate ID.
+- Copy the shortest exact substring from SOURCE that directly supports it.
+- Preserve spelling and punctuation exactly.
+- Use an empty quote when the source does not directly support the candidate.
+- Never paraphrase. Never repair a candidate. Never invent evidence.
+""".strip()
+
+
+EVIDENCE_LINK_USER_PROMPT_TEMPLATE = """
+SOURCE:
+{source_text}
+
+CANDIDATES:
+{candidates_json}
+
+Link each candidate to SOURCE.
+""".strip()
 
 
 EXTRACTOR_USER_PROMPT_TEMPLATE = """

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from .batching import DEFAULT_MAX_TOKENS, segment_interactions
 from .batching import plan as plan_batches
+from .evidence import EvidenceLinkStats, link_evidence, unresolved_candidates
 from .extractor import Extractor
 from .ingest import apply_fallback_summaries, coerce_to_interactions, load_ingest_config
 from .passport3 import (
@@ -202,13 +203,18 @@ class SozoGraph:
         authority: Authority = "inferred",
         sensitivity: Sensitivity = "internal",
         scopes: list[str] | None = None,
+        evidence_linking: Literal["deterministic", "model"] = "deterministic",
     ) -> MemoryPassport:
         """Ingest directly into the Passport 3 event ledger.
 
         The extractor emits validated candidates. The projector immediately
         writes immutable events with source evidence, valid time, transaction
-        time, policy fields, and stable logical identities.
+        time, policy fields, and stable logical identities. Evidence linking is
+        deterministic by default. ``evidence_linking="model"`` adds one bounded
+        pass for candidates whose exact source span cannot be found locally.
         """
+        if evidence_linking not in {"deterministic", "model"}:
+            raise ValueError("evidence_linking must be 'deterministic' or 'model'")
         meta = meta or {}
         interactions, sources = coerce_to_interactions(data, hint=hint, meta=meta)
         interactions = apply_fallback_summaries(
@@ -242,6 +248,40 @@ class SozoGraph:
 
         extractor = Extractor(self.provider)
         totals = ProjectionStats()
+        link_totals = {"deterministic": 0, "model_linked": 0, "unresolved": 0}
+
+        def prepare_evidence(update: dict[str, Any], source_text: str) -> None:
+            if evidence_linking == "model":
+                try:
+                    linked = link_evidence(self.provider, update, source_text)
+                except Exception as exc:  # noqa: BLE001
+                    unresolved = unresolved_candidates(update, source_text)
+                    linked = EvidenceLinkStats(
+                        deterministic=sum(
+                            len(update.get(bucket) or [])
+                            for bucket in (
+                                "facts", "prefs", "entities", "open_loops", "observations"
+                            )
+                        ) - len(unresolved),
+                        unresolved=len(unresolved),
+                    )
+                    base.extensions.setdefault("sozograph:evidence_link_failures", []).append({
+                        "error": f"{type(exc).__name__}: {exc}"[:300],
+                    })
+            else:
+                unresolved = unresolved_candidates(update, source_text)
+                linked = EvidenceLinkStats(
+                    deterministic=sum(
+                        len(update.get(bucket) or [])
+                        for bucket in (
+                            "facts", "prefs", "entities", "open_loops", "observations"
+                        )
+                    ) - len(unresolved),
+                    unresolved=len(unresolved),
+                )
+            link_totals["deterministic"] += linked.deterministic
+            link_totals["model_linked"] += linked.model_linked
+            link_totals["unresolved"] += linked.unresolved
 
         def known_keys() -> list[str]:
             return sorted({
@@ -303,6 +343,7 @@ class SozoGraph:
                 except Exception as exc:  # noqa: BLE001
                     _record_v3_failure(base, segment.id, segment.ts, exc)
                     continue
+                prepare_evidence(update, source_text)
                 project(
                     update,
                     source_id=source_id,
@@ -337,6 +378,7 @@ class SozoGraph:
                 except Exception as exc:  # noqa: BLE001
                     _record_v3_failure(base, str(source_id), interaction.ts, exc)
                     continue
+                prepare_evidence(update, source_text)
                 project(
                     update,
                     source_id=str(source_id),
@@ -350,6 +392,8 @@ class SozoGraph:
         base.extensions["sozograph:last_ingest"] = {
             **totals.to_dict(),
             "transaction_time": stamp.isoformat(),
+            "evidence_linking": evidence_linking,
+            **{f"evidence_{key}": value for key, value in link_totals.items()},
         }
         base.signatures = []
         return base
