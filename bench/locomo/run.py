@@ -71,6 +71,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Context budget per question")
     parser.add_argument("--segment-tokens", type=int, default=1500,
                         help="Target tokens per extraction segment")
+    parser.add_argument("--embed-model", default="nomic-embed-text",
+                        help="Local embedding model for the sozograph_v3_hybrid sidecar")
     parser.add_argument("--compact", action="store_true",
                         help="Run semantic reconciliation after ingestion")
     parser.add_argument("--categories", default=",".join(str(c) for c in DEFAULT_CATEGORIES),
@@ -172,6 +174,15 @@ def main(argv: list[str] | None = None) -> int:
                         result = runner(
                             conversation,
                             model=args.provider,
+                            budget_chars=args.budget_chars,
+                            max_segment_tokens=args.segment_tokens,
+                            provider_kwargs=provider_kwargs,
+                        )
+                    elif system == "sozograph_v3_hybrid":
+                        result = runner(
+                            conversation,
+                            model=args.provider,
+                            embed_model=args.embed_model,
                             budget_chars=args.budget_chars,
                             max_segment_tokens=args.segment_tokens,
                             provider_kwargs=provider_kwargs,
