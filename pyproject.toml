@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sozograph"
-version = "0.3.0"
+version = "0.3.1"
 description = "Portable JSON memory for LLM agents. No vector DB, no embeddings, any provider."
 readme = "README.md"
 requires-python = ">=3.10"

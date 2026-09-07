@@ -15,18 +15,6 @@ from __future__ import annotations
 
 from .compact import compact
 from .core import SozoGraph
-from .passport3 import (
-    AccessPolicy,
-    EvidenceSpan,
-    MemoryEvent,
-    MemoryPassport,
-    MemoryRecord,
-    PassportSignature,
-    TemporalInterval,
-    Tombstone,
-    canonical_json,
-    content_digest,
-)
 from .providers import LLMProvider, ProviderError, Usage, get_provider
 from .schema import (
     Contradiction,
@@ -56,16 +44,6 @@ __all__ = [
     "LLMProvider",
     "ProviderError",
     "Usage",
-    "MemoryPassport",
-    "MemoryRecord",
-    "MemoryEvent",
-    "EvidenceSpan",
-    "TemporalInterval",
-    "Tombstone",
-    "AccessPolicy",
-    "PassportSignature",
-    "canonical_json",
-    "content_digest",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"

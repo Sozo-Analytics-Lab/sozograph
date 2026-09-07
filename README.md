@@ -99,33 +99,6 @@ sg.plan(six_hundred_turns)
 Segment count depends on how long the turns are. Nothing is called; this is
 arithmetic on the input.
 
-### Passport 3 event ledger
-
-Passport 3 is available as a preview path. It writes validated extraction
-output directly into an append-only ledger with evidence, valid time,
-transaction time, policy fields, revision lineage, and replica merge.
-
-```python
-passport = sg.ingest_v3(
-    conversation,
-    meta={"user_key": "melanie"},
-    replica_id="laptop",
-    authority="user",
-    sensitivity="internal",
-)
-
-# Incremental ingestion updates the same ledger.
-passport = sg.ingest_v3(new_turns, passport=passport)
-
-# History and synchronization remain local and portable.
-old_state = passport.materialize(valid_at=some_past_time)
-merged = passport.merge(passport_from_phone)
-merged.save("melanie.passport3.json")
-```
-
-`SozoGraph.ingest()` remains the stable Passport 2.1 path. Use
-`Passport.to_v3()` for an offline snapshot upgrade.
-
 ### Read
 
 ```python

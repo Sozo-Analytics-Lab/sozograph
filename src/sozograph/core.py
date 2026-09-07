@@ -1,20 +1,12 @@
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
 from typing import Any
 
 from .batching import DEFAULT_MAX_TOKENS, segment_interactions
 from .batching import plan as plan_batches
 from .extractor import Extractor
 from .ingest import apply_fallback_summaries, coerce_to_interactions, load_ingest_config
-from .passport3 import (
-    Authority,
-    MemoryPassport,
-    ProjectionStats,
-    Sensitivity,
-    project_extraction_update,
-)
 from .providers import LLMProvider, from_env, get_provider
 from .render import export_context as _export_context
 from .resolver import ResolveStats, merge_passport_update
@@ -187,173 +179,6 @@ class SozoGraph:
         base.stats = stats_list
         return base
 
-    def ingest_v3(
-        self,
-        data: Any,
-        *,
-        passport: MemoryPassport | None = None,
-        meta: dict[str, Any] | None = None,
-        hint: str | None = None,
-        batch: bool = True,
-        max_segment_tokens: int = DEFAULT_MAX_TOKENS,
-        replica_id: str | None = None,
-        passport_id: str | None = None,
-        transaction_time: datetime | None = None,
-        authority: Authority = "inferred",
-        sensitivity: Sensitivity = "internal",
-        scopes: list[str] | None = None,
-    ) -> MemoryPassport:
-        """Ingest directly into the Passport 3 event ledger.
-
-        The extractor emits validated candidates. The projector immediately
-        writes immutable events with source evidence, valid time, transaction
-        time, policy fields, and stable logical identities.
-        """
-        meta = meta or {}
-        interactions, sources = coerce_to_interactions(data, hint=hint, meta=meta)
-        interactions = apply_fallback_summaries(
-            interactions,
-            sources=sources,
-            provider=self.provider,
-            cfg=self.ingest_cfg,
-        )
-        stamp = transaction_time or datetime.now(timezone.utc)
-        if stamp.tzinfo is None:
-            stamp = stamp.replace(tzinfo=timezone.utc)
-        subject_key = str(meta["user_key"]) if meta.get("user_key") else None
-        if passport is None:
-            base = MemoryPassport.new(
-                subject_key=subject_key,
-                replica_id=replica_id or str(meta.get("replica_id") or "local"),
-                passport_id=passport_id,
-                now=stamp,
-            )
-        else:
-            base = passport
-            if subject_key and base.subject_key and subject_key != base.subject_key:
-                raise ValueError("meta user_key does not match the Passport 3 subject_key")
-            if subject_key and not base.subject_key:
-                base.subject_key = subject_key
-            if passport_id and passport_id != base.passport_id:
-                raise ValueError("passport_id does not match the supplied Passport 3 ledger")
-            if replica_id:
-                base.replica_id = replica_id
-                base.signatures = []
-
-        extractor = Extractor(self.provider)
-        totals = ProjectionStats()
-
-        def known_keys() -> list[str]:
-            return sorted({
-                record.key
-                for record in base.materialize()
-                if record.kind in {"fact", "preference"} and record.key
-            })
-
-        def project(
-            update: dict[str, Any],
-            *,
-            source_id: str,
-            source_text: str,
-            source_time: datetime,
-            source_end_time: datetime | None,
-            source_kind: str,
-            source_pointer: str | None,
-        ) -> None:
-            stats = project_extraction_update(
-                base,
-                update,
-                source_id=source_id,
-                source_text=source_text,
-                source_time=source_time,
-                source_end_time=source_end_time,
-                transaction_time=stamp,
-                source_kind=source_kind,
-                source_pointer=source_pointer,
-                authority=authority,
-                sensitivity=sensitivity,
-                scopes=scopes,
-            )
-            totals.events_appended += stats.events_appended
-            totals.revisions_skipped += stats.revisions_skipped
-            totals.exact_evidence += stats.exact_evidence
-            totals.coarse_evidence += stats.coarse_evidence
-
-        if batch:
-            for segment in segment_interactions(
-                interactions,
-                max_tokens=max_segment_tokens,
-            ):
-                source_text = segment.text(max_chars=12_000)
-                source_id = stable_id(
-                    "seg_",
-                    {
-                        "segment_id": segment.id,
-                        "start": segment.ts.isoformat(),
-                        "end": segment.end_ts.isoformat(),
-                        "source": segment.source,
-                        "text": source_text,
-                    },
-                )
-                try:
-                    update = extractor.extract_segment(
-                        segment,
-                        known_keys=known_keys(),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    _record_v3_failure(base, segment.id, segment.ts, exc)
-                    continue
-                project(
-                    update,
-                    source_id=source_id,
-                    source_text=source_text,
-                    source_time=segment.ts,
-                    source_end_time=segment.end_ts,
-                    source_kind=_source_kind(segment.type),
-                    source_pointer=segment.source,
-                )
-        else:
-            for index, interaction in enumerate(interactions):
-                source_id = meta.get("source_id")
-                if not source_id:
-                    source_id = stable_id(
-                        "src_",
-                        {
-                            "id": interaction.id,
-                            "source": interaction.source,
-                            "timestamp": interaction.ts.isoformat(),
-                            "text": interaction.short_text(),
-                        },
-                    )
-                elif len(interactions) > 1:
-                    source_id = f"{source_id}_{index}"
-                source_text = interaction.short_text()
-                try:
-                    update = extractor.extract(
-                        interaction,
-                        source_id=str(source_id),
-                        known_keys=known_keys(),
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    _record_v3_failure(base, str(source_id), interaction.ts, exc)
-                    continue
-                project(
-                    update,
-                    source_id=str(source_id),
-                    source_text=source_text,
-                    source_time=interaction.ts,
-                    source_end_time=interaction.ts,
-                    source_kind=_source_kind(interaction.type),
-                    source_pointer=interaction.source,
-                )
-
-        base.extensions["sozograph:last_ingest"] = {
-            **totals.to_dict(),
-            "transaction_time": stamp.isoformat(),
-        }
-        base.signatures = []
-        return base
-
     def plan(
         self,
         data: Any,
@@ -412,21 +237,6 @@ def _record_segment_failure(base: Passport, segment: Any, exc: Exception) -> Non
         "ts": getattr(getattr(segment, "ts", None), "isoformat", lambda: None)(),
         "error": f"{type(exc).__name__}: {exc}"[:300],
     })
-
-
-def _record_v3_failure(
-    base: MemoryPassport,
-    source_id: str,
-    stamp: datetime,
-    exc: Exception,
-) -> None:
-    failures = base.extensions.setdefault("sozograph:ingest_failures", [])
-    failures.append({
-        "source_id": source_id,
-        "source_time": stamp.isoformat(),
-        "error": f"{type(exc).__name__}: {exc}"[:300],
-    })
-    base.signatures = []
 
 
 def _update_kwargs(update: dict[str, Any]) -> dict[str, Any]:

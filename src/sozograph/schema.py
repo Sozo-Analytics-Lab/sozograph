@@ -22,13 +22,8 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-def _with_extra(model: BaseModel, data: dict[str, Any]) -> dict[str, Any]:
-    """Keep fields written by a newer schema at their original level."""
-    return {**(model.model_extra or {}), **data}
-
-
 class Fact(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     key: str = Field(..., min_length=1)
     value: JSONValue
@@ -49,17 +44,17 @@ class Fact(BaseModel):
         return f"{self.key} {self.value}"
 
     def to_compact(self) -> dict[str, Any]:
-        return _with_extra(self, {
+        return {
             "key": self.key,
             "value": self.value,
             "ts": _iso(self.ts),
             "confidence": float(self.confidence),
             "source": self.source,
-        })
+        }
 
 
 class Preference(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     key: str = Field(..., min_length=1)
     value: JSONValue
@@ -80,13 +75,13 @@ class Preference(BaseModel):
         return f"{self.key} {self.value}"
 
     def to_compact(self) -> dict[str, Any]:
-        return _with_extra(self, {
+        return {
             "key": self.key,
             "value": self.value,
             "ts": _iso(self.ts),
             "confidence": float(self.confidence),
             "source": self.source,
-        })
+        }
 
 
 #: Single source of truth for entity types. prompts.py builds the JSON Schema
@@ -117,7 +112,7 @@ EntityType = Literal[
 
 
 class Entity(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     name: str = Field(..., min_length=1)
     type: EntityType = Field("other")
@@ -148,7 +143,7 @@ class Entity(BaseModel):
         d = {"name": self.name, "type": self.type}
         if self.aliases:
             d["aliases"] = list(self.aliases)
-        return _with_extra(self, d)
+        return d
 
 
 class Observation(BaseModel):
@@ -171,7 +166,7 @@ class Observation(BaseModel):
     else.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     text: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
@@ -227,11 +222,11 @@ class Observation(BaseModel):
             d["when"] = self.when
         if self.participants:
             d["participants"] = list(self.participants)
-        return _with_extra(self, d)
+        return d
 
 
 class OpenLoop(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     item: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
@@ -242,13 +237,11 @@ class OpenLoop(BaseModel):
         return self.item
 
     def to_compact(self) -> dict[str, Any]:
-        return _with_extra(
-            self, {"item": self.item, "ts": _iso(self.ts), "source": self.source}
-        )
+        return {"item": self.item, "ts": _iso(self.ts), "source": self.source}
 
 
 class Contradiction(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     key: str
     old: JSONValue
@@ -263,7 +256,7 @@ class Contradiction(BaseModel):
         return f"{self.key} {self.old} {self.new}"
 
     def to_compact(self) -> dict[str, Any]:
-        return _with_extra(self, {
+        return {
             "key": self.key,
             "old": self.old,
             "new": self.new,
@@ -271,7 +264,7 @@ class Contradiction(BaseModel):
             "ts_new": _iso(self.ts_new),
             "source_old": self.source_old,
             "source_new": self.source_new,
-        })
+        }
 
 
 class Episode(BaseModel):
@@ -289,7 +282,7 @@ class Episode(BaseModel):
     degrades episodic recall rather than losing a fact outright.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     ts: datetime = Field(default_factory=utcnow)
@@ -311,7 +304,7 @@ class Episode(BaseModel):
             d["participants"] = list(self.participants)
         if self.keywords:
             d["keywords"] = list(self.keywords)
-        return _with_extra(self, d)
+        return d
 
     def search_text(self) -> str:
         """Everything worth matching a query against."""
@@ -331,7 +324,7 @@ SourceKind = Literal[
 
 
 class SourceRef(BaseModel):
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     id: str
     kind: SourceKind = Field("unknown")
@@ -345,7 +338,7 @@ class SourceRef(BaseModel):
             d["hash"] = self.hash
         if self.source:
             d["source"] = self.source
-        return _with_extra(self, d)
+        return d
 
 
 PASSPORT_VERSION = "2.1"
@@ -364,7 +357,7 @@ class Passport(BaseModel):
     embedding model to match.
     """
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="forbid")
 
     version: str = Field(PASSPORT_VERSION)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -380,10 +373,6 @@ class Passport(BaseModel):
     sources: list[SourceRef] = Field(default_factory=list)
 
     meta: dict[str, Any] = Field(default_factory=dict)
-
-    #: Future top-level fields. Runtime-only as a named field. The serializer
-    #: writes each entry back to its original top-level position.
-    future_fields: dict[str, Any] = Field(default_factory=dict, exclude=True, repr=False)
 
     #: Per-interaction merge statistics from the most recent ingest.
     #: Runtime-only: excluded from serialization so it never lands on disk.
@@ -415,7 +404,6 @@ class Passport(BaseModel):
     def to_compact_dict(self) -> dict[str, Any]:
         """The portable form. Empty sections are omitted to keep it small."""
         d: dict[str, Any] = {
-            **self.future_fields,
             "version": self.version,
             "updated_at": _iso(self.updated_at),
         }
@@ -447,7 +435,7 @@ class Passport(BaseModel):
         if not isinstance(data, dict):
             raise TypeError(f"Passport.from_dict expects a dict, got {type(data).__name__}")
 
-        known = set(cls.model_fields) - {"stats", "future_fields"}
+        known = set(cls.model_fields) - {"stats"}
         payload = {k: v for k, v in data.items() if k in known}
         payload.setdefault("version", PASSPORT_VERSION)
         for section in ("facts", "prefs", "entities", "open_loops",
@@ -456,12 +444,12 @@ class Passport(BaseModel):
         payload.setdefault("meta", {})
 
         extra = {k: v for k, v in data.items() if k not in known}
-        previous_extra = payload["meta"].pop("_unknown", {})
-        if isinstance(previous_extra, dict):
-            extra = {**previous_extra, **extra}
-        payload["future_fields"] = extra
+        if extra:
+            # Keep anything a newer writer added so a round trip is lossless.
+            payload["meta"] = {**payload["meta"], "_unknown": extra}
 
         passport = cls(**payload)
+        passport.version = PASSPORT_VERSION
         return passport
 
     def to_json(self, *, indent: int | None = 2) -> str:
@@ -512,21 +500,6 @@ class Passport(BaseModel):
     def token_estimate(self) -> int:
         """Rough token count of the serialized passport (~4 chars per token)."""
         return max(1, len(self.to_json(indent=None)) // 4)
-
-    def to_v3(
-        self,
-        *,
-        replica_id: str = "legacy-import",
-        passport_id: str | None = None,
-    ) -> Any:
-        """Upgrade this snapshot to an append-only Passport 3 ledger."""
-        from .passport3 import MemoryPassport
-
-        return MemoryPassport.from_legacy(
-            self,
-            replica_id=replica_id,
-            passport_id=passport_id,
-        )
 
     def is_empty(self) -> bool:
         return not (self.facts or self.prefs or self.entities
