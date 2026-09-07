@@ -18,7 +18,7 @@ import math
 import re
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
@@ -165,11 +165,98 @@ def match_names(query: str, vocabulary: Iterable[str]) -> list[str]:
     return found
 
 
+def _clean_group(names: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for n in names or []:
+        n2 = (n or "").strip().lower()
+        if len(n2) < 2 or n2 in seen:
+            continue
+        seen.add(n2)
+        out.append(n2)
+    return out
+
+
+@dataclass
+class EntityGraph:
+    """
+    A co-occurrence graph over names mentioned together in the same record.
+
+    Two names get an edge whenever one record names both of them (an
+    observation's participants, an episode's participants); the edge weight is
+    how often that happens. Built once from data the extractor already
+    captures: no separate schema, no persisted index, nothing to keep in sync
+    with the passport. This is the pure-Python form of the frontier
+    literature's graph-propagation idea for multi-hop retrieval (HippoRAG's
+    Personalized PageRank, Graphiti's typed-edge graph): who is connected to
+    whom, with no graph database and no embedding model behind it.
+
+    Stays schema-agnostic like the rest of this module: it takes groups of
+    plain name strings, not passport records, so it needs no import from
+    `schema` and is directly testable with lists of names.
+    """
+
+    adjacency: dict[str, Counter[str]] = field(default_factory=dict)
+
+    @classmethod
+    def build(cls, groups: Iterable[Sequence[str]]) -> EntityGraph:
+        adjacency: dict[str, Counter[str]] = {}
+        for group in groups:
+            names = _clean_group(group)
+            for i, a in enumerate(names):
+                for b in names[i + 1 :]:
+                    adjacency.setdefault(a, Counter())[b] += 1
+                    adjacency.setdefault(b, Counter())[a] += 1
+        return cls(adjacency=adjacency)
+
+    def neighbors(self, name: str, *, hops: int = 1, limit: int = 6) -> list[str]:
+        """
+        Names connected to `name` within `hops`, strongest edge first.
+
+        Fan-out is capped so one heavily-discussed person cannot pull in an
+        entire cast of characters; the strongest edges survive the cap.
+        """
+        start = (name or "").strip().lower()
+        if hops < 1 or start not in self.adjacency:
+            return []
+        visited = {start}
+        frontier = {start}
+        collected: list[tuple[int, str]] = []
+        for _ in range(hops):
+            next_frontier: set[str] = set()
+            for node in frontier:
+                for neighbor, weight in self.adjacency.get(node, {}).items():
+                    if neighbor in visited:
+                        continue
+                    collected.append((weight, neighbor))
+                    next_frontier.add(neighbor)
+            if not next_frontier:
+                break
+            visited |= next_frontier
+            frontier = next_frontier
+        collected.sort(key=lambda pair: (-pair[0], pair[1]))
+        ordered: list[str] = []
+        seen: set[str] = set()
+        for _weight, n in collected:
+            if n in seen:
+                continue
+            seen.add(n)
+            ordered.append(n)
+            if len(ordered) >= limit:
+                break
+        return ordered
+
+
 #: How much naming the query's subject lifts a record. Larger than any possible
 #: BM25-plus-prior score (BM25 is normalized to 1.0, the prior adds at most
 #: `prior_weight`), so every record about the named subject sorts above every
 #: record that is not, while BM25 still orders within each group.
 _ENTITY_MATCH_BONUS = 10.0
+
+#: Smaller than a direct match: a record about someone who co-occurs with the
+#: query's subject is relevant but unconfirmed, so it can rank above ordinary
+#: lexical matches without ever displacing an actual name hit.
+_GRAPH_NEIGHBOR_BONUS = 4.0
 
 
 def rank_expanded(
@@ -180,9 +267,11 @@ def rank_expanded(
     limit: int | None = None,
     prior: Callable[[Any], float] | None = None,
     vocabulary: Iterable[str] | None = None,
+    graph: EntityGraph | None = None,
+    graph_hops: int = 1,
 ) -> list[Scored]:
     """
-    BM25 ranking widened by named-entity recall.
+    BM25 ranking widened by named-entity recall, optionally by graph recall.
 
     Lexical top-k alone answers "find the observation matching these words".
     A multi-hop list question needs the union of everything about its subject,
@@ -198,6 +287,14 @@ def rank_expanded(
     and cutting to `limit` would return the same top-`limit` as plain `rank`,
     because a low-BM25 record about the subject loses its slot to a higher-BM25
     record right back. The bonus is what makes the subject's records win the cut.
+
+    When `graph` is given, a matched name's co-occurrence neighbors also get a
+    smaller lift. "What does Melanie do with her family?" names Melanie
+    directly; if Caroline co-occurs with Melanie across several observations,
+    a record naming only Caroline surfaces too, even though "Caroline" never
+    appears in the query. Direct name matches always outrank connected ones,
+    so a spurious graph edge can compete with an ordinary lexical match but can
+    never displace an actual name hit.
     """
     scored = rank(items, query, text_of=text_of, limit=None, prior=prior)
     if not scored or not query or not vocabulary:
@@ -207,10 +304,21 @@ def rank_expanded(
     if not names:
         return scored[:limit] if limit is not None else scored
 
+    neighbor_names: set[str] = set()
+    if graph is not None:
+        for name in names:
+            neighbor_names.update(graph.neighbors(name, hops=graph_hops))
+        neighbor_names -= set(names)
+
     lifted: list[Scored] = []
     for s in scored:
-        hit = any(n in text_of(items[s.index]).lower() for n in names)
-        bonus = _ENTITY_MATCH_BONUS if hit else 0.0
+        text = text_of(items[s.index]).lower()
+        if any(n in text for n in names):
+            bonus = _ENTITY_MATCH_BONUS
+        elif neighbor_names and any(n in text for n in neighbor_names):
+            bonus = _GRAPH_NEIGHBOR_BONUS
+        else:
+            bonus = 0.0
         lifted.append(Scored(index=s.index, score=s.score + bonus, item=s.item))
     lifted.sort(key=lambda s: (-s.score, s.index))
     return lifted[:limit] if limit is not None else lifted

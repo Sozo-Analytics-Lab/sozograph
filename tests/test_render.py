@@ -295,3 +295,65 @@ def test_observation_event_date_is_annotated_and_sorted():
     assert "[2026-03-12]" in txt2
     first = next(line for line in txt2.splitlines() if line.startswith("- "))
     assert "sage green" in first
+
+
+def test_co_occurrence_graph_surfaces_a_relative_never_named_in_the_query():
+    """A multi-hop question naming only the subject must also surface a
+    record about a family member it never names, because the two co-occur
+    elsewhere in the passport. This is the graph, not entity expansion: no
+    substring in the query matches "Caroline" at all."""
+    p = Passport()
+    # Establishes the co-occurrence edge: Melanie and Caroline appear together.
+    p.observations.append(
+        Observation(text="Melanie and Caroline went apple picking together",
+                    ts=dt("2026-01-01T00:00:00Z"), source="t0",
+                    participants=["Melanie", "Caroline"])
+    )
+    # Caroline-only record the graph should lift; nothing here names Melanie.
+    p.observations.append(
+        Observation(text="Caroline started volunteering at the animal shelter",
+                    ts=dt("2026-01-10T00:00:00Z"), source="t0",
+                    participants=["Caroline"])
+    )
+    # Noise: unrelated to either, must not be lifted.
+    for i in range(20):
+        p.observations.append(
+            Observation(text=f"unrelated chatter item {i} about the commute",
+                        ts=dt("2026-02-03T10:00:00Z"), source="t1")
+        )
+
+    txt = export_context(p, query="What does Melanie do with her family?",
+                         budget_chars=30_000, caps=Caps(observations=5))
+    assert "volunteering at the animal shelter" in txt
+
+
+def test_co_occurrence_graph_never_fires_without_a_direct_name_match():
+    """No name from the query appears anywhere, so rank_expanded returns
+    before the graph is ever consulted. Everything ties at zero score, so a
+    correct implementation keeps the cap's five lowest-index items; a false
+    graph lift would instead jump the high-index Caroline record ahead of
+    them despite ties, which is exactly what this catches. The noise text
+    shares no word with the query, so nothing here wins on lexical score
+    either -- the only way "volunteering" could appear is a stray bonus."""
+    p = Passport()
+    for i in range(20):
+        p.observations.append(
+            Observation(text=f"routine grocery note number {i} about milk and bread",
+                        ts=dt("2026-02-03T10:00:00Z"), source="t1")
+        )
+    # Appended last, so these sit at the highest indices: only a wrongly
+    # applied bonus could pull the Caroline record ahead of the tied noise.
+    p.observations.append(
+        Observation(text="Melanie and Caroline went apple picking together",
+                    ts=dt("2026-01-01T00:00:00Z"), source="t0",
+                    participants=["Melanie", "Caroline"])
+    )
+    p.observations.append(
+        Observation(text="Caroline started volunteering at the animal shelter",
+                    ts=dt("2026-01-10T00:00:00Z"), source="t0",
+                    participants=["Caroline"])
+    )
+
+    txt = export_context(p, query="what is the forecast for this weekend",
+                         budget_chars=30_000, caps=Caps(observations=5))
+    assert "volunteering at the animal shelter" not in txt

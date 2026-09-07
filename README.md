@@ -201,7 +201,9 @@ On a matched six-conversation slice, the atomic observation layer doubled sozogr
 
 **Two gaps remain, and both point the right way.** The larger is extraction recall: sozograph still abstains on 44% of single-hop questions because the 8B does not write down every fact. That is the coverage ceiling the memory literature names first, and it lifts most with a stronger extractor. The other is the backbone itself: full_context reaches only 47.66% on this 8B, while GPT-4o-mini scores ~73% on LightMem's own table. Much of the residual is the model, not the architecture, and that is a tailwind. SozoGraph is a thin, portable layer over whatever model you bring, so every stronger model lifts it for free, no reindex and no migration.
 
-Read 25.4% as directional. The architecture is sound; the next honest number needs a stronger backbone behind it.
+**v3.1: a co-occurrence graph for multi-hop.** Multi-hop was the weakest category above (16%). Entity-expanded retrieval already lifts every record naming the query's subject; a co-occurrence graph goes one step further. Two names get an edge whenever one record mentions both of them, data the extractor already captures on every observation and episode. When a query names one person, records about someone who co-occurs with them lift too, even when that second person is never named in the query at all ("What does Melanie do with her family?" now also surfaces "Caroline adopted a rescue greyhound", a record that names only Caroline). Pure Python, built fresh from the passport on every render, capped fan-out, nothing persisted and nothing to keep in sync. A direct name match always outranks a graph-connected one, so a spurious edge can compete but never displace an actual hit. Not yet measured against LoCoMo; see [`ADR_Entity_Graph_2026-09-07.md`](docs/ADR_Entity_Graph_2026-09-07.md).
+
+Read 25.4% as directional. The architecture is sound; the next honest numbers need this graph measured and a stronger backbone behind it.
 
 ## Compared to LightMem
 

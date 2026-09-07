@@ -11,7 +11,7 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any
 
-from .retrieve import rank, rank_expanded
+from .retrieve import EntityGraph, rank, rank_expanded
 from .schema import (
     Contradiction,
     Entity,
@@ -159,6 +159,32 @@ def _entity_vocabulary(passport: Passport) -> list[str]:
     return vocab
 
 
+#: Direct hops only. Two names co-occurring in one record is real relational
+#: signal; a friend-of-a-friend chain risks pulling in an entire long
+#: conversation's cast for one query. Start conservative, widen later if an
+#: eval shows it helps.
+_GRAPH_HOPS = 1
+
+
+def _co_occurrence_groups(passport: Passport) -> list[list[str]]:
+    """
+    Every record's own participant list, for the co-occurrence graph.
+
+    An observation or episode naming two people together is the actual
+    relational data multi-hop questions need ("Melanie and Caroline went
+    hiking"); it costs nothing extra to capture, since the extractor already
+    writes `participants` on both record kinds.
+    """
+    groups: list[list[str]] = []
+    for o in passport.observations:
+        if len(o.participants) >= 2:
+            groups.append(o.participants)
+    for e in passport.episodes:
+        if len(e.participants) >= 2:
+            groups.append(e.participants)
+    return groups
+
+
 def _select(items: list[Any], query: str | None, prior, limit: int,
             text_of) -> list[Any]:
     """
@@ -174,7 +200,14 @@ def _select(items: list[Any], query: str | None, prior, limit: int,
     return [s.item for s in scored]
 
 
-def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> list[str]:
+def _build(
+    passport: Passport,
+    caps: Caps,
+    query: str | None,
+    header: str,
+    vocabulary: list[str],
+    graph: EntityGraph,
+) -> list[str]:
     now, oldest = _bounds(passport)
     kv_prior = _kv_prior(now, oldest)
     t_prior = _time_prior(now, oldest)
@@ -210,7 +243,9 @@ def _build(passport: Passport, caps: Caps, query: str | None, header: str) -> li
             text_of=lambda o: o.search_text(),
             limit=caps.observations,
             prior=t_prior,
-            vocabulary=_entity_vocabulary(passport),
+            vocabulary=vocabulary,
+            graph=graph,
+            graph_hops=_GRAPH_HOPS,
         )
     ]
     if _wants_chronology(query):
@@ -283,8 +318,12 @@ def export_context(
     """
     budget_chars = max(400, int(budget_chars or 6000))
     current = caps or Caps()
+    # Built once: neither depends on caps, so rebuilding them on every trim
+    # retry (up to 400 below) would be pure waste on a passport of any size.
+    vocabulary = _entity_vocabulary(passport)
+    graph = EntityGraph.build(_co_occurrence_groups(passport))
 
-    lines = _build(passport, current, query, header)
+    lines = _build(passport, current, query, header, vocabulary, graph)
     if len("\n".join(lines)) <= budget_chars:
         return "\n".join(lines)
 
@@ -300,7 +339,7 @@ def export_context(
             text = "\n".join(lines)
             return text[: budget_chars - 1] + "…"
 
-        lines = _build(passport, current, query, header)
+        lines = _build(passport, current, query, header, vocabulary, graph)
         if len("\n".join(lines)) <= budget_chars:
             return "\n".join(lines)
 
