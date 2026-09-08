@@ -254,6 +254,36 @@ def test_ollama_factory_with_no_overrides_changes_nothing():
     assert ollama.num_ctx is None and ollama.num_predict is None and ollama.repeat_penalty is None
 
 
+def test_extractor_records_why_items_are_rejected_not_just_a_count():
+    # A rejected-count-only diagnostic makes "why is this incomplete" a
+    # guessing game (found the hard way debugging a real weak-model run:
+    # 86 rejected_records with no way to see what the model actually sent).
+    # This is what turns that into a fix instead of another blind retry.
+    from sozograph.extractor import Extractor
+
+    payload = {
+        "facts": [{"key": "", "value": "x", "confidence": 0.9}],  # empty key -> ValidationError
+        "prefs": [], "entities": [], "open_loops": [], "observations": [],
+    }
+    extractor = Extractor(Provider(payload=payload))
+    extractor.validate(payload, source_id="s")
+    assert extractor.diagnostics["rejected_records"] == 1
+    reasons = extractor.diagnostics["rejected_reasons"]
+    assert len(reasons) == 1 and reasons[0].startswith("facts:")
+
+
+def test_ingest_report_surfaces_rejection_reasons_for_partial_units():
+    provider = Provider(payload={
+        "facts": [{"key": "", "value": "x", "confidence": 0.9}],
+        "prefs": [], "entities": [], "open_loops": [], "observations": [],
+        "episode": {"summary": "s", "participants": [], "keywords": [], "salience": 0.5},
+    })
+    p = SozoGraph(provider).ingest(TURNS, max_split_depth=0)
+    unit = next(iter(p.ingest_report["units"].values()))
+    assert unit["status"] == "partial"
+    assert any(r.startswith("facts:") for r in unit["rejected_reasons"])
+
+
 def test_paired_bootstrap_is_reproducible():
     from bench.replay import paired_bootstrap
     args = ({"c1": [False, True], "c2": [False]}, {"c1": [True, True], "c2": [True]})

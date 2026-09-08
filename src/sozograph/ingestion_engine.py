@@ -121,6 +121,13 @@ def ingest_into(engine, data, *, passport, meta, hint, batch, max_segment_tokens
             failure = {"segment": segment.id, "error": error}
             if failure not in failures:
                 failures.append(failure)
+        if rejected:
+            # A handful of reasons, not the count again: what the model
+            # produced that the wire schema (or a pydantic-only constraint
+            # the model was never told about, e.g. a required min_length)
+            # rejected is exactly what turns "why is this incomplete" from
+            # a guess into a fix.
+            details["rejected_reasons"] = diagnostics.get("rejected_reasons", [])[:3]
         if children:
             details["children"] = [source_id(child) for child in children]
         ledger[key] = "complete" if ok and not children else details

@@ -190,6 +190,16 @@ class Extractor:
 
         raw_counts = {}
         saturated = []
+        # Bounded, not exhaustive: this exists so a failure mode can be
+        # diagnosed from the ingest report instead of guessed at from a
+        # bare count. `except: continue` previously discarded the actual
+        # pydantic/KeyError message entirely.
+        reasons: list[str] = []
+
+        def reject(bucket: str, exc: Exception) -> None:
+            if len(reasons) < 20:
+                reasons.append(f"{bucket}: {type(exc).__name__}: {exc}"[:200])
+
         for bucket in ("facts", "prefs", "entities", "open_loops", "observations"):
             raw = data.get(bucket) or []
             raw_counts[bucket] = len(raw) if isinstance(raw, list) else 1
@@ -213,7 +223,8 @@ class Extractor:
                             **stamp,
                         )
                     )
-                except (ValidationError, KeyError, TypeError, ValueError):
+                except (ValidationError, KeyError, TypeError, ValueError) as exc:
+                    reject(bucket, exc)
                     continue
 
         for item in (data.get("entities") or [])[: ARRAY_LIMITS["entities"]]:
@@ -227,7 +238,8 @@ class Extractor:
                         aliases=[a for a in (item.get("aliases") or []) if isinstance(a, str)],
                     )
                 )
-            except (ValidationError, KeyError, TypeError, ValueError):
+            except (ValidationError, KeyError, TypeError, ValueError) as exc:
+                reject("entities", exc)
                 continue
 
         for item in (data.get("open_loops") or [])[: ARRAY_LIMITS["open_loops"]]:
@@ -235,7 +247,8 @@ class Extractor:
                 continue
             try:
                 out["open_loops"].append(OpenLoop(item=item["item"], source=source_id, **stamp))
-            except (ValidationError, KeyError, TypeError, ValueError):
+            except (ValidationError, KeyError, TypeError, ValueError) as exc:
+                reject("open_loops", exc)
                 continue
 
         # The schema bounds this array; the slice covers a provider that ignores
@@ -253,9 +266,10 @@ class Extractor:
                         **stamp,
                     )
                 )
-            except (ValidationError, KeyError, TypeError, ValueError):
+            except (ValidationError, KeyError, TypeError, ValueError) as exc:
+                reject("observations", exc)
                 continue
 
         self.diagnostics = {"rejected_records": sum(max(0, n - len(out[b])) for b, n in raw_counts.items()),
-                            "saturated": saturated}
+                            "saturated": saturated, "rejected_reasons": reasons}
         return out
