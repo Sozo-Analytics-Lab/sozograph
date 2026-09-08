@@ -70,8 +70,44 @@ def test_saturation_repair_is_bounded():
     assert p.ingest_report["saturated_units"]
 
 
+def test_blank_or_whitespace_items_are_skipped_and_good_ones_kept():
+    # The exact shape of the real failure: one bad item mixed in with good
+    # ones. Previously the whole segment was flagged for a retry that
+    # splitting the source text could never fix, since the problem was never
+    # the text's length. Now only the genuinely blank item is dropped.
+    from sozograph.extractor import Extractor
+
+    payload = {
+        "observations": [{"text": "Alice likes blue.", "when": ""},
+                         {"text": "   ", "when": ""},
+                         {"text": "", "when": ""}],
+        "entities": [{"name": "Alice", "type": "person", "aliases": []},
+                    {"name": "", "type": "person", "aliases": []}],
+        "facts": [], "prefs": [], "open_loops": [],
+    }
+    extractor = Extractor(Provider(payload=payload))
+    out = extractor.validate(payload, source_id="s")
+    assert [o.text for o in out["observations"]] == ["Alice likes blue."]
+    assert [e.name for e in out["entities"]] == ["Alice"]
+    assert extractor.diagnostics["rejected_records"] == 0
+
+
+def test_a_missing_required_field_is_skipped_not_rejected():
+    # An absent field and an empty string mean the same thing here (the
+    # model chose not to report this item), so both are skipped rather than
+    # flagged for a retry that only text-splitting could never fix.
+    provider = Provider(payload={"observations": [{"missing": "text"}],
+                                  "facts": [], "prefs": [], "entities": [], "open_loops": []})
+    p = SozoGraph(provider).ingest(TURNS, max_extra_calls=0)
+    assert p.ingest_report["complete"]
+    assert p.ingest_report["rejected_records"] == 0
+    assert p.observations == []
+
+
 def test_invalid_payload_is_not_complete():
-    provider = Provider(payload={"observations": [{"missing": "text"}]})
+    # A genuinely malformed record (not merely blank) still counts.
+    provider = Provider(payload={"entities": [{"name": "Bob", "type": "not-a-real-type", "aliases": []}],
+                                  "facts": [], "prefs": [], "open_loops": [], "observations": []})
     p = SozoGraph(provider).ingest(TURNS, max_extra_calls=0)
     assert not p.ingest_report["complete"]
     assert p.ingest_report["rejected_records"] == 1
@@ -259,29 +295,31 @@ def test_extractor_records_why_items_are_rejected_not_just_a_count():
     # guessing game (found the hard way debugging a real weak-model run:
     # 86 rejected_records with no way to see what the model actually sent).
     # This is what turns that into a fix instead of another blind retry.
+    # An invalid (not blank) type, since a blank required field is now
+    # skipped rather than rejected -- see _blank in extractor.py.
     from sozograph.extractor import Extractor
 
     payload = {
-        "facts": [{"key": "", "value": "x", "confidence": 0.9}],  # empty key -> ValidationError
-        "prefs": [], "entities": [], "open_loops": [], "observations": [],
+        "entities": [{"name": "Bob", "type": "not-a-real-type", "aliases": []}],
+        "facts": [], "prefs": [], "open_loops": [], "observations": [],
     }
     extractor = Extractor(Provider(payload=payload))
     extractor.validate(payload, source_id="s")
     assert extractor.diagnostics["rejected_records"] == 1
     reasons = extractor.diagnostics["rejected_reasons"]
-    assert len(reasons) == 1 and reasons[0].startswith("facts:")
+    assert len(reasons) == 1 and reasons[0].startswith("entities:")
 
 
 def test_ingest_report_surfaces_rejection_reasons_for_partial_units():
     provider = Provider(payload={
-        "facts": [{"key": "", "value": "x", "confidence": 0.9}],
-        "prefs": [], "entities": [], "open_loops": [], "observations": [],
+        "entities": [{"name": "Bob", "type": "not-a-real-type", "aliases": []}],
+        "facts": [], "prefs": [], "open_loops": [], "observations": [],
         "episode": {"summary": "s", "participants": [], "keywords": [], "salience": 0.5},
     })
     p = SozoGraph(provider).ingest(TURNS, max_split_depth=0)
     unit = next(iter(p.ingest_report["units"].values()))
     assert unit["status"] == "partial"
-    assert any(r.startswith("facts:") for r in unit["rejected_reasons"])
+    assert any(r.startswith("entities:") for r in unit["rejected_reasons"])
 
 
 def test_paired_bootstrap_is_reproducible():

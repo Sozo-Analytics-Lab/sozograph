@@ -47,6 +47,23 @@ def coerce_value(raw: Any) -> Any:
     return s
 
 
+def _blank(value: Any) -> bool:
+    """
+    True for None, "", or a whitespace-only string.
+
+    Grammar-constrained decoding enforces `type`/`required`/`enum`/`maxItems`
+    reliably (confirmed live: no schema violation of those kinds surfaced in
+    real Kaggle runs) but not the `pattern` this wire schema also carries on
+    every required non-empty string -- Ollama's grammar compiler accepts an
+    empty string for it just as readily as before the pattern was added.
+    An empty required field is the model choosing not to report this array
+    item, not a malformed one; skipping it here keeps that item from
+    counting as a rejection and triggering a segment split it cannot fix,
+    since splitting text does nothing about a model that sometimes emits "".
+    """
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
 def _clamp(value: Any, lo: float = 0.0, hi: float = 1.0, default: float = 0.7) -> float:
     try:
         return max(lo, min(hi, float(value)))
@@ -188,8 +205,12 @@ class Extractor:
         stamp = {"ts": ts} if ts is not None else {}
         who = list(participants or [])
 
-        raw_counts = {}
         saturated = []
+        # A genuine rejection count, not array-length arithmetic: an empty
+        # required field is now skipped silently (see _blank), and counting
+        # it as "rejected" here would still flag the segment as needing a
+        # split it cannot fix, defeating the point of skipping it at all.
+        rejected = 0
         # Bounded, not exhaustive: this exists so a failure mode can be
         # diagnosed from the ingest report instead of guessed at from a
         # bare count. `except: continue` previously discarded the actual
@@ -197,12 +218,13 @@ class Extractor:
         reasons: list[str] = []
 
         def reject(bucket: str, exc: Exception) -> None:
+            nonlocal rejected
+            rejected += 1
             if len(reasons) < 20:
                 reasons.append(f"{bucket}: {type(exc).__name__}: {exc}"[:200])
 
         for bucket in ("facts", "prefs", "entities", "open_loops", "observations"):
             raw = data.get(bucket) or []
-            raw_counts[bucket] = len(raw) if isinstance(raw, list) else 1
             if isinstance(raw, list) and len(raw) >= ARRAY_LIMITS[bucket]:
                 saturated.append(bucket)
             if not isinstance(raw, list):
@@ -211,7 +233,7 @@ class Extractor:
             # The schema bounds these arrays; this slice covers a provider
             # that ignores maxItems, so the loop failure cannot re-enter here.
             for item in (data.get(bucket) or [])[: ARRAY_LIMITS[bucket]]:
-                if not isinstance(item, dict):
+                if not isinstance(item, dict) or _blank(item.get("key")):
                     continue
                 try:
                     out[bucket].append(
@@ -228,7 +250,7 @@ class Extractor:
                     continue
 
         for item in (data.get("entities") or [])[: ARRAY_LIMITS["entities"]]:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or _blank(item.get("name")):
                 continue
             try:
                 out["entities"].append(
@@ -243,7 +265,7 @@ class Extractor:
                 continue
 
         for item in (data.get("open_loops") or [])[: ARRAY_LIMITS["open_loops"]]:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or _blank(item.get("item")):
                 continue
             try:
                 out["open_loops"].append(OpenLoop(item=item["item"], source=source_id, **stamp))
@@ -254,7 +276,7 @@ class Extractor:
         # The schema bounds this array; the slice covers a provider that ignores
         # maxItems, so a runaway array cannot re-enter here either.
         for item in (data.get("observations") or [])[: ARRAY_LIMITS["observations"]]:
-            if not isinstance(item, dict):
+            if not isinstance(item, dict) or _blank(item.get("text")):
                 continue
             try:
                 out["observations"].append(
@@ -270,6 +292,6 @@ class Extractor:
                 reject("observations", exc)
                 continue
 
-        self.diagnostics = {"rejected_records": sum(max(0, n - len(out[b])) for b, n in raw_counts.items()),
-                            "saturated": saturated, "rejected_reasons": reasons}
+        self.diagnostics = {"rejected_records": rejected, "saturated": saturated,
+                            "rejected_reasons": reasons}
         return out
