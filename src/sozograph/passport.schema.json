@@ -1,0 +1,819 @@
+{
+  "$defs": {
+    "Contradiction": {
+      "additionalProperties": true,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
+          "type": "string"
+        },
+        "status": {
+          "default": "resolved",
+          "enum": [
+            "resolved",
+            "disputed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "old": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Old"
+        },
+        "new": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "New"
+        },
+        "ts_old": {
+          "format": "date-time",
+          "title": "Ts Old",
+          "type": "string"
+        },
+        "ts_new": {
+          "format": "date-time",
+          "title": "Ts New",
+          "type": "string"
+        },
+        "source_old": {
+          "title": "Source Old",
+          "type": "string"
+        },
+        "source_new": {
+          "title": "Source New",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "old",
+        "new",
+        "ts_old",
+        "ts_new",
+        "source_old",
+        "source_new"
+      ],
+      "title": "Contradiction",
+      "type": "object"
+    },
+    "Entity": {
+      "additionalProperties": true,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "default": "other",
+          "enum": [
+            "person",
+            "organization",
+            "project",
+            "product",
+            "place",
+            "tool",
+            "skill",
+            "concept",
+            "other"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Aliases",
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "Entity",
+      "type": "object"
+    },
+    "Episode": {
+      "additionalProperties": true,
+      "description": "What happened, and when.\n\nFacts answer \"what is true now\". A flat key-value belief state throws away\neverything else by construction, which is fatal on multi-hop and temporal\nquestions (\"what did she say about the painting in session 4\"). Episodes\nare compact per-segment summaries produced by the same extraction call, so\nthey cost no extra API request.\n\nThey are also what keeps retrieval honest: the belief state is small enough\nto inject in full, so only episodes are ever ranked, and a retrieval miss\ndegrades episodic recall rather than losing a fact outright.",
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "summary": {
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "participants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Participants",
+          "type": "array"
+        },
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Keywords",
+          "type": "array"
+        },
+        "salience": {
+          "default": 0.5,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Salience",
+          "type": "number"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "summary",
+        "source"
+      ],
+      "title": "Episode",
+      "type": "object"
+    },
+    "EvidenceRef": {
+      "additionalProperties": true,
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string"
+        },
+        "turn_id": {
+          "title": "Turn Id",
+          "type": "string"
+        },
+        "part_id": {
+          "default": "",
+          "title": "Part Id",
+          "type": "string"
+        },
+        "quote": {
+          "default": "",
+          "title": "Quote",
+          "type": "string"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "match": {
+          "default": "candidate",
+          "enum": [
+            "exact",
+            "candidate"
+          ],
+          "title": "Match",
+          "type": "string"
+        },
+        "score": {
+          "default": 0.0,
+          "maximum": 1,
+          "minimum": 0,
+          "title": "Score",
+          "type": "number"
+        }
+      },
+      "required": [
+        "source",
+        "turn_id"
+      ],
+      "title": "EvidenceRef",
+      "type": "object"
+    },
+    "Fact": {
+      "additionalProperties": true,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
+          "type": "string"
+        },
+        "status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "disputed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "key": {
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.7,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "source"
+      ],
+      "title": "Fact",
+      "type": "object"
+    },
+    "Observation": {
+      "additionalProperties": true,
+      "description": "One atomic thing that was said or happened, kept verbatim in meaning.\n\nFacts hold the belief state: what is true now, deduplicated under a key.\nThat layer deliberately discards incidental detail (\"the hike took two\nhours\", \"she hid the bone in a slipper\") because it is neither stable nor\nkeyable. But that incidental detail is exactly what a single-hop recall\nquestion asks for. An observation is a self-contained, third-person\nstatement of one such detail, with relative dates already resolved, so it\ncan be matched by a later query and injected on its own.\n\nIt is append-only and never keyed: there is no belief to overwrite, only a\nrecord of what was observed. Retrieval, not reconciliation, decides what\nsurfaces. This is the portable form of the \"atomic fact\" memory that wins\non long-conversation recall benchmarks, carrying no embedding and no vector\nstore: a plain string ranked by the same pure-Python BM25 as everything\nelse.",
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "when": {
+          "default": "",
+          "title": "When",
+          "type": "string"
+        },
+        "when_end": {
+          "default": "",
+          "title": "When End",
+          "type": "string"
+        },
+        "precision": {
+          "default": "unknown",
+          "enum": [
+            "unknown",
+            "day",
+            "month",
+            "year",
+            "range"
+          ],
+          "title": "Precision",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        },
+        "participants": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Participants",
+          "type": "array"
+        }
+      },
+      "required": [
+        "text",
+        "source"
+      ],
+      "title": "Observation",
+      "type": "object"
+    },
+    "OpenLoop": {
+      "additionalProperties": true,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
+          "type": "string"
+        },
+        "status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "completed",
+            "cancelled"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "item": {
+          "minLength": 1,
+          "title": "Item",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "item",
+        "source"
+      ],
+      "title": "OpenLoop",
+      "type": "object"
+    },
+    "Preference": {
+      "additionalProperties": true,
+      "properties": {
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "source_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Source Ids",
+          "type": "array"
+        },
+        "subject": {
+          "default": "",
+          "title": "Subject",
+          "type": "string"
+        },
+        "status": {
+          "default": "active",
+          "enum": [
+            "active",
+            "disputed"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "key": {
+          "minLength": 1,
+          "title": "Key",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 0.7,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "source": {
+          "minLength": 1,
+          "title": "Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "value",
+        "source"
+      ],
+      "title": "Preference",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": true,
+      "properties": {
+        "text": {
+          "default": "",
+          "title": "Text",
+          "type": "string"
+        },
+        "turns": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Turns",
+          "type": "array"
+        },
+        "turn_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Turn Ids",
+          "type": "array"
+        },
+        "retention": {
+          "default": "none",
+          "enum": [
+            "none",
+            "excerpts",
+            "full"
+          ],
+          "title": "Retention",
+          "type": "string"
+        },
+        "coverage": {
+          "default": "none",
+          "enum": [
+            "none",
+            "partial",
+            "full"
+          ],
+          "title": "Coverage",
+          "type": "string"
+        },
+        "parent": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "kind": {
+          "default": "unknown",
+          "enum": [
+            "transcript",
+            "firestore",
+            "rtdb",
+            "supabase",
+            "chat",
+            "form",
+            "unknown"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "ts": {
+          "format": "date-time",
+          "title": "Ts",
+          "type": "string"
+        },
+        "hash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Hash"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Source"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": true,
+  "description": "A portable memory snapshot.\n\nThis is the whole product: a small JSON object holding what is true\n(`facts`), what is wanted (`prefs`), who and what is involved (`entities`),\nwhat is unfinished (`open_loops`), what changed (`contradictions`), what\nhappened (`episodes`), and the atomic details worth recalling\n(`observations`). It moves between runtimes, databases, and client\napplications as plain JSON, with no vector store to migrate and no\nembedding model to match.",
+  "properties": {
+    "version": {
+      "type": "string",
+      "const": "2.2",
+      "default": "2.2"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    },
+    "user_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "User Key"
+    },
+    "facts": {
+      "items": {
+        "$ref": "#/$defs/Fact"
+      },
+      "title": "Facts",
+      "type": "array"
+    },
+    "prefs": {
+      "items": {
+        "$ref": "#/$defs/Preference"
+      },
+      "title": "Prefs",
+      "type": "array"
+    },
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/Entity"
+      },
+      "title": "Entities",
+      "type": "array"
+    },
+    "open_loops": {
+      "items": {
+        "$ref": "#/$defs/OpenLoop"
+      },
+      "title": "Open Loops",
+      "type": "array"
+    },
+    "contradictions": {
+      "items": {
+        "$ref": "#/$defs/Contradiction"
+      },
+      "title": "Contradictions",
+      "type": "array"
+    },
+    "episodes": {
+      "items": {
+        "$ref": "#/$defs/Episode"
+      },
+      "title": "Episodes",
+      "type": "array"
+    },
+    "observations": {
+      "items": {
+        "$ref": "#/$defs/Observation"
+      },
+      "title": "Observations",
+      "type": "array"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/SourceRef"
+      },
+      "title": "Sources",
+      "type": "array"
+    },
+    "meta": {
+      "additionalProperties": true,
+      "title": "Meta",
+      "type": "object"
+    }
+  },
+  "title": "Passport",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/schemas/passport-2.2.schema.json"
+}

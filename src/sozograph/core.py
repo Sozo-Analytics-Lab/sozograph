@@ -3,15 +3,13 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .batching import DEFAULT_MAX_TOKENS, segment_interactions
+from .batching import DEFAULT_MAX_TOKENS
 from .batching import plan as plan_batches
-from .extractor import Extractor
-from .ingest import apply_fallback_summaries, coerce_to_interactions, load_ingest_config
+from .ingest import coerce_to_interactions, load_ingest_config
 from .providers import LLMProvider, from_env, get_provider
 from .render import export_context as _export_context
-from .resolver import ResolveStats, merge_passport_update
-from .schema import Passport, SourceRef
-from .utils import sha256_json, stable_id
+from .resolver import ResolveStats
+from .schema import Passport
 
 
 def _default_context_budget() -> int:
@@ -95,6 +93,13 @@ class SozoGraph:
         hint: str | None = None,
         batch: bool = True,
         max_segment_tokens: int = DEFAULT_MAX_TOKENS,
+        retention: str = "none",
+        extraction_revision: str = "0.3.2",
+        reextract: bool = False,
+        max_extra_calls: int = 8,
+        max_split_depth: int = 2,
+        clock=None,
+        checkpoint=None,
     ) -> Passport:
         """
         Ingest a transcript, a database object, or a list of either.
@@ -105,79 +110,12 @@ class SozoGraph:
         extraction call each. Pass `batch=False` to extract per interaction,
         which costs one call per turn and is almost never what you want.
         """
-        base = passport if passport is not None else Passport.new()
-        meta = meta or {}
-
-        user_key = meta.get("user_key")
-        if user_key:
-            base.user_key = str(user_key)
-
-        interactions, sources = coerce_to_interactions(data, hint=hint, meta=meta)
-        extractor = Extractor(self.provider)
-        interactions = apply_fallback_summaries(
-            interactions,
-            sources=sources,
-            provider=self.provider,
-            cfg=self.ingest_cfg,
-        )
-
-        stats_list: list[ResolveStats] = []
-
-        if batch:
-            units = segment_interactions(interactions, max_tokens=max_segment_tokens)
-            # Provenance is recorded per segment, matching the granularity the
-            # facts actually cite. One SourceRef per turn made the evidence log
-            # larger than the memory it documented on a long conversation, and
-            # nothing referenced those entries.
-            for segment in units:
-                base.upsert_source(
-                    SourceRef(
-                        id=stable_id("seg_", segment.id),
-                        kind=_source_kind(segment.type),
-                        ts=segment.ts,
-                        hash=sha256_json([i.text for i in segment.interactions]),
-                        source=segment.source,
-                    )
-                )
-            for segment in units:
-                # Tier 0 deduplication: show the model the vocabulary it already
-                # has so it reuses a key rather than coining a synonym. Read
-                # fresh each round so keys learned a moment ago are visible.
-                #
-                # One segment's extraction can fail on its own: a provider
-                # timeout under sustained load, or a completion the engine
-                # truncated mid-JSON on an unusually dense stretch. Losing the
-                # whole conversation's memory because segment 30 of 34 hiccuped
-                # is the wrong failure. Skip the segment, record it, and keep
-                # the passport built so far -- the same "keep what finished"
-                # contract the benchmark runner already honours per conversation.
-                try:
-                    update = extractor.extract_segment(
-                        segment, known_keys=base.known_keys()
-                    )
-                except Exception as exc:  # noqa: BLE001 - provider/decoding failure is opaque here
-                    _record_segment_failure(base, segment, exc)
-                    continue
-                base, stats = merge_passport_update(base, **_update_kwargs(update))
-                stats_list.append(stats)
-        else:
-            for src in sources:
-                base.upsert_source(src)
-            for idx, it in enumerate(interactions):
-                source_id = meta.get("source_id")
-                if not source_id:
-                    source_id = stable_id("src_", it.source) if it.source else f"i_{idx}"
-                elif len(interactions) > 1:
-                    source_id = f"{source_id}_{idx}"
-
-                update = extractor.extract(
-                    it, source_id=source_id, known_keys=base.known_keys()
-                )
-                base, stats = merge_passport_update(base, **_update_kwargs(update))
-                stats_list.append(stats)
-
-        base.stats = stats_list
-        return base
+        from .ingestion_engine import ingest_into
+        return ingest_into(self, data, passport=passport, meta=meta, hint=hint, batch=batch,
+                           max_segment_tokens=max_segment_tokens, retention=retention,
+                           extraction_revision=extraction_revision, reextract=reextract,
+                           max_extra_calls=max_extra_calls, max_split_depth=max_split_depth,
+                           clock=clock, checkpoint=checkpoint)
 
     def plan(
         self,
@@ -186,6 +124,8 @@ class SozoGraph:
         meta: dict[str, Any] | None = None,
         hint: str | None = None,
         max_segment_tokens: int = DEFAULT_MAX_TOKENS,
+        max_extra_calls: int = 8,
+        retention: str = "none",
     ) -> dict[str, float]:
         """
         Report what ingesting `data` will cost, without calling a model.
@@ -193,7 +133,19 @@ class SozoGraph:
         Worth running once before ingesting a long history.
         """
         interactions, _ = coerce_to_interactions(data, hint=hint, meta=meta or {})
-        return plan_batches(interactions, max_tokens=max_segment_tokens)
+        from .ingestion_engine import normalize_database_text
+        normalize_database_text(interactions)
+        report = plan_batches(interactions, max_tokens=max_segment_tokens)
+        if retention not in {"none", "excerpts", "full"} or max_extra_calls < 0:
+            raise ValueError("Invalid retention or call bound")
+        from .prompts import EXTRACTOR_SYSTEM_PROMPT, EXTRACTOR_USER_PROMPT_TEMPLATE
+        overhead = len(EXTRACTOR_SYSTEM_PROMPT) + len(EXTRACTOR_USER_PROMPT_TEMPLATE) + 100
+        report["estimated_prompt_overhead_tokens"] = int(overhead * report["segments"] / 3.6)
+        report["estimated_input_tokens"] += report["estimated_prompt_overhead_tokens"]
+        report["max_extraction_calls"] = report["segments"] + max_extra_calls
+        report["source_text_bytes"] = sum(len(i.text.encode("utf-8")) for i in interactions)
+        report["original_source_text_bytes_before_overlap"] = report["source_text_bytes"] if retention != "none" else 0
+        return report
 
     # -- export -----------------------------------------------------------
 
@@ -209,45 +161,9 @@ class SozoGraph:
         return _export_context(
             passport,
             query=query,
-            budget_chars=budget_chars or _default_context_budget(),
+            budget_chars=_default_context_budget() if budget_chars is None else budget_chars,
             header=header,
         )
-
-
-_SOURCE_KINDS = frozenset(
-    {"transcript", "firestore", "rtdb", "supabase", "chat", "form", "unknown"}
-)
-
-
-def _source_kind(interaction_type: str) -> str:
-    return interaction_type if interaction_type in _SOURCE_KINDS else "unknown"
-
-
-def _record_segment_failure(base: Passport, segment: Any, exc: Exception) -> None:
-    """
-    Note a skipped segment on the passport so the loss is auditable, not silent.
-
-    A dropped segment is real data loss; it belongs in the record next to the
-    dedupe audit, where a caller inspecting the passport can see it happened and
-    why, rather than discovering a hole by its absence.
-    """
-    failures = base.meta.setdefault("ingest_failures", [])
-    failures.append({
-        "segment": getattr(segment, "id", None),
-        "ts": getattr(getattr(segment, "ts", None), "isoformat", lambda: None)(),
-        "error": f"{type(exc).__name__}: {exc}"[:300],
-    })
-
-
-def _update_kwargs(update: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "facts": update.get("facts") or [],
-        "prefs": update.get("prefs") or [],
-        "entities": update.get("entities") or [],
-        "open_loops": update.get("open_loops") or [],
-        "episodes": update.get("episodes") or [],
-        "observations": update.get("observations") or [],
-    }
 
 
 def ingest(*args: Any, **kwargs: Any) -> tuple[Passport, list[ResolveStats]]:

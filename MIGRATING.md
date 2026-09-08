@@ -1,3 +1,37 @@
+# Migrating to 0.3.2
+
+Package 0.3.2 writes Passport 2.2. Existing ingest/context/save entry points remain.
+Versions 1.0, 2.0, and 2.1 migrate explicitly. Retain original files before saving
+through the new writer. Defaults can be omitted; stored values and extensions survive.
+Unknown nested fields stay in place. Legacy meta._unknown extensions are restored
+at top level where they do not collide, while preserving the legacy copy.
+Unsupported future versions support opaque round-trip only, not memory operations.
+
+New source IDs include speaker, session, source, and time identity. Imported IDs
+stay intact. Legacy inputs have no new completion receipts, so initial replay can
+call extraction again. Stable input IDs and timestamps are recommended.
+
+Facts/preferences add optional subject/status. Equal-time alternatives remain
+as disputed records; key identity is subject plus key, with multiple alternatives
+possible. Undated identical observations on different discussion dates remain
+separate. Near-deduplication requires matching ordered content and polarity,
+participants, and dates. Ambiguous word reorderings are kept.
+
+Graph expansion is opt-in. Recall now packs complete records and honors budgets
+down to zero; oversized records can be omitted. Inspect recall().dropped.
+Retention none/excerpts/full controls how much source text travels with memory;
+include_sources=True retrieves it. Check ingest_report completeness and use a
+checkpoint callback for interrupted work. stats/ingest_report are runtime-only;
+completion receipts persist in meta.
+
+Forgetting erases connected source groups and can remove collateral details.
+Audit metadata/extensions are cleared; external copies and reingestion are outside
+the local erasure contract. File persistence remains single-writer.
+
+Original migration notes follow.
+
+---
+
 # Migrating from 0.1.x to 0.2.0
 
 0.2.0 is a clean break. The library is no longer Gemini-only, and several

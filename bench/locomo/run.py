@@ -192,7 +192,6 @@ def main(argv: list[str] | None = None) -> int:
                     finally:
                         judged = len(marks)
                         if judged < total_questions:
-                            result.answers = result.answers[:judged]
                             result.notes["judged_of_total"] = f"{judged}/{total_questions}"
                         runs.append(result)
                         verdicts.append(marks)

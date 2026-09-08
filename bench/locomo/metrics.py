@@ -96,7 +96,7 @@ def aggregate(system: str, results: list[RunResult], verdicts: list[list[bool]])
         metrics.qa_seconds += result.qa_seconds
         metrics.passport_tokens += result.passport_tokens
 
-        for answer, ok in zip(result.answers, marks, strict=True):
+        for answer, ok in zip(result.answers, marks, strict=False):
             metrics.questions += 1
             metrics.correct += int(ok)
             name = CATEGORY_NAMES.get(answer.category, f"category_{answer.category}")
@@ -186,10 +186,10 @@ def save(all_metrics: list[Metrics], results: dict[str, list[RunResult]],
                             "gold": a.gold,
                             "prediction": a.prediction,
                             "category": CATEGORY_NAMES.get(a.category, f"category_{a.category}"),
-                            "correct": v.correct,
-                            "reason": v.reason,
+                            "correct": v.correct if v else None,
+                            "reason": v.reason if v else "not judged",
                         }
-                        for a, v in zip(r.answers, vs, strict=True)
+                        for a, v in zip(r.answers, [*vs, *([None] * (len(r.answers) - len(vs)))], strict=True)
                     ],
                 }
                 for r, vs in zip(runs, verdicts.get(system, []), strict=False)

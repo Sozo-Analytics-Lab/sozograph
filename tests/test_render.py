@@ -323,7 +323,7 @@ def test_co_occurrence_graph_surfaces_a_relative_never_named_in_the_query():
         )
 
     txt = export_context(p, query="What does Melanie do with her family?",
-                         budget_chars=30_000, caps=Caps(observations=5))
+                         budget_chars=30_000, caps=Caps(observations=5), graph=True)
     assert "volunteering at the animal shelter" in txt
 
 
@@ -355,5 +355,5 @@ def test_co_occurrence_graph_never_fires_without_a_direct_name_match():
     )
 
     txt = export_context(p, query="what is the forecast for this weekend",
-                         budget_chars=30_000, caps=Caps(observations=5))
+                         budget_chars=30_000, caps=Caps(observations=5), graph=True)
     assert "volunteering at the animal shelter" not in txt

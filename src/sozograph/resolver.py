@@ -7,7 +7,9 @@ and the behaviour auditable.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from functools import lru_cache
 from typing import Any
 
@@ -23,7 +25,7 @@ from .schema import (
     Passport,
     Preference,
 )
-from .utils import normalize_key
+from .utils import normalize_key, sha256_json
 
 
 @dataclass
@@ -59,10 +61,10 @@ def _value_equal(a: Any, b: Any) -> bool:
     "direct" were recorded as a contradiction and the value flip-flopped on
     every ingest. Numbers written as text ("7" and 7) had the same problem.
     """
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
     if a is b or a == b:
         return True
-    if isinstance(a, bool) or isinstance(b, bool):
-        return a == b
     if isinstance(a, (int, float)) and isinstance(b, (int, float)):
         return abs(float(a) - float(b)) < 1e-9
     if isinstance(a, str) and isinstance(b, str):
@@ -101,7 +103,10 @@ def _merge_entity(existing: Entity, incoming: Entity) -> Entity:
     typ = existing.type
     if typ == "other" and incoming.type != "other":
         typ = incoming.type
-    return Entity(name=existing.name, type=typ, aliases=aliases)
+    merged = existing.model_copy(deep=True)
+    merged.type, merged.aliases = typ, aliases
+    _merge_provenance(merged, incoming)
+    return merged
 
 
 def _record_contradiction(
@@ -117,6 +122,10 @@ def _record_contradiction(
     for existing in contradictions:
         if (
             existing.key == candidate.key
+            and existing.subject == candidate.subject
+            and existing.ts_old == candidate.ts_old
+            and existing.ts_new == candidate.ts_new
+            and existing.status == candidate.status
             and _value_equal(existing.old, candidate.old)
             and _value_equal(existing.new, candidate.new)
         ):
@@ -142,60 +151,67 @@ def _upsert_kv(
     guarded fuzzy match. A pair the polarity guard blocks becomes a new key
     rather than silently overwriting the belief it resembles.
     """
+    incoming = incoming.model_copy(deep=True)
     incoming.key = normalize_key(incoming.key)
-    match = find_match(incoming.key, [it.key for it in items])
+    scoped = [it for it in items if it.subject.casefold() == incoming.subject.casefold()]
+    match = find_match(incoming.key, [it.key for it in scoped])
     stats.dedupe.record(match)
-
     if not match.is_merge:
         items.append(incoming)
         return True, None
-
     if match.verdict is Verdict.MERGE:
         stats.keys_deduped += 1
+    group = [it for it in scoped if it.key == match.existing]
+    incoming.key = normalize_key(match.existing)
+    latest = max(it.ts for it in group)
+    for current in group:
+        current.key = incoming.key
+        if _value_equal(current.value, incoming.value):
+            _merge_provenance(current, incoming)
+            if incoming.ts > latest:
+                for other in group:
+                    if other is not current:
+                        _record_contradiction(contradictions, _change(other, incoming))
+                        items.remove(other)
+                current.status = "active"
+            if incoming.ts > current.ts:
+                current.ts, current.source = incoming.ts, incoming.source
+            current.confidence = max(current.confidence, incoming.confidence)
+            return False, None
+    changes = []
+    for current in group:
+        if incoming.ts == latest:
+            current.status = incoming.status = "disputed"
+            # A canonical display order does not select a winner.
+            left, right = sorted([current, incoming], key=lambda x: sha256_json(x.value))
+            change = _change(left, right, disputed=True)
+        elif incoming.ts > latest:
+            change = _change(current, incoming)
+        else:
+            change = _change(incoming, current)
+        if _record_contradiction(contradictions, change):
+            changes.append(change)
+    if incoming.ts > latest:
+        for current in group:
+            items.remove(current)
+        incoming.status = "active"
+        items.append(incoming)
+    elif incoming.ts == latest:
+        items.append(incoming)
+    return incoming.ts >= latest, changes[0] if changes else None
 
-    target = match.existing
-    idx = next(i for i, it in enumerate(items) if it.key == target)
-    current = items[idx]
-    # Canonicalize the stored key on every match. A passport built before the
-    # normalizer was unified can hold "Tone"; without this it lingers forever
-    # and renders differently from the key it merges under.
-    current.key = normalize_key(current.key)
-    incoming.key = current.key
 
-    if _value_equal(current.value, incoming.value):
-        if incoming.ts > current.ts:
-            current.ts = incoming.ts
-            current.source = incoming.source
-        current.confidence = max(float(current.confidence), float(incoming.confidence))
-        items[idx] = current
-        return False, None
+def _change(old, new, *, disputed=False):
+    return Contradiction(key=old.key, subject=old.subject, old=old.value, new=new.value,
+                         ts_old=old.ts, ts_new=new.ts, source_old=old.source,
+                         source_new=new.source, status="disputed" if disputed else "resolved")
 
-    if incoming.ts >= current.ts:
-        change = Contradiction(
-            key=current.key,
-            old=current.value,
-            new=incoming.value,
-            ts_old=current.ts,
-            ts_new=incoming.ts,
-            source_old=current.source,
-            source_new=incoming.source,
-        )
-        added = _record_contradiction(contradictions, change)
-        items[idx] = incoming
-        return True, (change if added else None)
 
-    # The incoming value is older than what is stored, so it does not win.
-    change = Contradiction(
-        key=current.key,
-        old=incoming.value,
-        new=current.value,
-        ts_old=incoming.ts,
-        ts_new=current.ts,
-        source_old=incoming.source,
-        source_new=current.source,
-    )
-    added = _record_contradiction(contradictions, change)
-    return False, (change if added else None)
+def _merge_provenance(existing, incoming):
+    existing.source_ids = sorted(set(existing.source_ids + incoming.source_ids
+                                      + [s for s in [getattr(existing, "source", None), getattr(incoming, "source", None)] if s]))
+    refs = {sha256_json(e.to_compact()): e for e in existing.evidence + incoming.evidence}
+    existing.evidence = [refs[k] for k in sorted(refs)]
 
 
 def _upsert_open_loop(existing: list[OpenLoop], incoming: OpenLoop) -> bool:
@@ -203,7 +219,7 @@ def _upsert_open_loop(existing: list[OpenLoop], incoming: OpenLoop) -> bool:
     if not key:
         return False
     for i, loop in enumerate(existing):
-        if _loop_key(loop.item) == key:
+        if _loop_key(loop.item) == key and loop.subject.casefold() == incoming.subject.casefold():
             if incoming.ts > loop.ts:
                 existing[i] = incoming
                 return True
@@ -270,29 +286,38 @@ def _add_observation(existing: list[Observation], incoming: Observation) -> bool
     key = _observation_key(incoming.text)
     if not key:
         return False
-
-    inc_tokens = _content_tokens(key)
-    inc_date = incoming.when or incoming.ts.date().isoformat()
     for obs in existing:
-        obs_key = _observation_key(obs.text)
-        if obs_key == key:
+        # Explicit dates must agree. Undated copies are only equivalent on
+        # their discussion date; otherwise recurrence is ambiguous.
+        if (obs.when, obs.when_end, obs.precision) != (incoming.when, incoming.when_end, incoming.precision):
+            continue
+        if not obs.when and obs.ts.date() != incoming.ts.date():
+            continue
+        exact = _observation_key(obs.text) == key
+        near = (safe_observation_paraphrase(obs.text, incoming.text)
+                and set(p.casefold() for p in obs.participants) == set(p.casefold() for p in incoming.participants)
+                and bool(obs.participants))
+        if exact or near:
+            _merge_provenance(obs, incoming)
             _union_participants(obs, incoming)
             if incoming.ts < obs.ts:
-                obs.ts = incoming.ts
-                obs.source = incoming.source
+                obs.ts, obs.source = incoming.ts, incoming.source
             return False
-        # Near-duplicate guard: high token overlap AND shared participants
-        # AND the same event date. Single evidence never merges.
-        if (
-            _jaccard(inc_tokens, _content_tokens(obs_key)) >= _NEAR_DUP_JACCARD
-            and _shares_participant(obs, incoming)
-            and (obs.when or obs.ts.date().isoformat()) == inc_date
-        ):
-            _union_participants(obs, incoming)
-            return False
-
-    existing.append(incoming)
+    existing.append(incoming.model_copy(deep=True))
     return True
+
+
+def safe_observation_paraphrase(a: str, b: str) -> bool:
+    # Conservative: no changed content token, number, polarity, directional
+    # relation, or named-person order may be discarded as a paraphrase.
+    if tokenize(a) != tokenize(b):
+        return False
+    guards = {"not", "no", "never", "without", "before", "after", "from", "until"}
+    if set(tokenize(a, keep_stopwords=True)) & guards != set(tokenize(b, keep_stopwords=True)) & guards:
+        return False
+    def names(text):
+        return re.findall(r"\b[A-Z][a-z]+\b", text)
+    return names(a) == names(b)
 
 
 def _union_participants(obs: Observation, incoming: Observation) -> None:
@@ -314,8 +339,10 @@ def merge_passport_update(
     open_loops: list[OpenLoop] | None = None,
     episodes: list[Episode] | None = None,
     observations: list[Observation] | None = None,
+    now: datetime | None = None,
 ) -> tuple[Passport, ResolveStats]:
     """Merge an extraction update into a passport. Deterministic throughout."""
+    base.assert_supported()
     stats = ResolveStats()
 
     for fact in facts or []:
@@ -351,7 +378,7 @@ def merge_passport_update(
             audit.setdefault(bucket, []).extend(rows)
 
     _sort(base)
-    base.touch()
+    base.touch(now)
     return base, stats
 
 
@@ -399,10 +426,10 @@ def _merge_entities(base: Passport, entities: list[Entity], stats: ResolveStats)
 
 def _sort(base: Passport) -> None:
     """Stable ordering, so the serialized passport is byte-comparable."""
-    base.facts.sort(key=lambda x: (normalize_key(x.key), -x.ts.timestamp()))
-    base.prefs.sort(key=lambda x: (normalize_key(x.key), -x.ts.timestamp()))
+    base.facts.sort(key=lambda x: (x.subject.casefold(), normalize_key(x.key), -x.ts.timestamp(), sha256_json(x.value)))
+    base.prefs.sort(key=lambda x: (x.subject.casefold(), normalize_key(x.key), -x.ts.timestamp(), sha256_json(x.value)))
     base.entities.sort(key=lambda x: (_entity_key(x.name), x.type))
     base.open_loops.sort(key=lambda x: (-x.ts.timestamp(), _loop_key(x.item)))
-    base.contradictions.sort(key=lambda x: (normalize_key(x.key), -x.ts_new.timestamp()))
+    base.contradictions.sort(key=lambda x: (x.subject.casefold(), normalize_key(x.key), -x.ts_new.timestamp(), sha256_json([x.old, x.new])))
     base.episodes.sort(key=lambda x: (x.ts.timestamp(), x.id))
     base.observations.sort(key=lambda x: (-x.ts.timestamp(), _observation_key(x.text)))

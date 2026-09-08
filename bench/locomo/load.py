@@ -41,12 +41,14 @@ _DATE_FORMATS = (
 class QA:
     question: str
     answer: str
-    category: int
+    category: int | str
     evidence: list[str] = field(default_factory=list)
+    question_date: str = ""
+    evidence_sessions: list[str] = field(default_factory=list)
 
     @property
     def category_name(self) -> str:
-        return CATEGORY_NAMES.get(self.category, f"category_{self.category}")
+        return CATEGORY_NAMES.get(self.category, str(self.category))
 
 
 @dataclass

@@ -22,8 +22,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
+from .dedupe import polarity_conflict
 from .providers import LLMProvider, from_env
-from .resolver import _record_contradiction, _sort, _value_equal
+from .resolver import _sort
 from .schema import Passport
 from .utils import normalize_key
 
@@ -158,6 +159,7 @@ def compact(
         result = sozograph.compact(passport)
         print(result.merged)
     """
+    passport.assert_supported()
     result = CompactionResult()
     vocabulary = _vocabulary(passport, max_keys)
     result.keys_before = len({key for _, key, _ in vocabulary})
@@ -203,6 +205,17 @@ def compact(
             )
             continue
 
+        rows = passport.facts + passport.prefs
+        unsafe = any(polarity_conflict(canonical, alias) for alias in aliases)
+        # Subject identity and unresolved alternatives are never reconciled
+        # solely on a model's key-name suggestion.
+        involved = [r for r in rows if r.key in [canonical, *aliases]]
+        unsafe |= len({r.subject.casefold() for r in involved}) > 1
+        unsafe |= any(r.status == "disputed" for r in involved)
+        if unsafe:
+            result.rejected.append({"canonical": canonical, "aliases": aliases,
+                                    "reason": "polarity, scope, or disputed-state guard"})
+            continue
         result.merged.append({"canonical": canonical, "aliases": aliases, "reason": reason})
 
     if apply and result.merged:
@@ -221,28 +234,17 @@ def compact(
 
 def _apply_merge(passport: Passport, canonical: str, aliases: Sequence[str]) -> None:
     """Fold alias keys into the canonical key, newest value winning."""
-    for items in (passport.facts, passport.prefs):
-        targets = [i for i in items if i.key == canonical]
-        if not targets:
+    from .resolver import merge_passport_update
+    for bucket in ("facts", "prefs"):
+        items = getattr(passport, bucket)
+        if not any(i.key == canonical for i in items):
             continue
-        winner = max(targets, key=lambda i: i.ts)
-
-        for alias in aliases:
-            for item in [i for i in items if i.key == alias]:
-                if item.ts > winner.ts and not _value_equal(item.value, winner.value):
-                    _record_contradiction(
-                        passport.contradictions,
-                        _contradiction(canonical, winner, item),
-                    )
-                    winner.value = item.value
-                    winner.ts = item.ts
-                    winner.source = item.source
-                winner.confidence = max(
-                    float(winner.confidence), float(item.confidence)
-                )
+        for item in list(items):
+            if item.key in aliases:
                 items.remove(item)
-
-        items[:] = [i for i in items if i.key != canonical or i is winner]
+                incoming = item.model_copy(deep=True)
+                incoming.key = canonical
+                merge_passport_update(passport, **{bucket: [incoming]})
 
 
 def _contradiction(key: str, old_item: Any, new_item: Any):
@@ -250,6 +252,7 @@ def _contradiction(key: str, old_item: Any, new_item: Any):
 
     return Contradiction(
         key=key,
+        subject=old_item.subject,
         old=old_item.value,
         new=new_item.value,
         ts_old=old_item.ts,

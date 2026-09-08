@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .batching import Segment
+from .batching import Segment, source_id
 from .interaction import Interaction
 from .prompts import (
     ARRAY_LIMITS,
@@ -16,9 +16,9 @@ from .prompts import (
     format_known_keys,
 )
 from .providers.base import LLMProvider
-from .retrieve import keywords_from
+from .retrieve import keywords_from, match_names
 from .schema import Entity, Episode, Fact, Observation, OpenLoop, Preference
-from .utils import normalize_key, stable_id
+from .utils import normalize_key
 
 _BARE_LITERALS = {"true": True, "false": False, "null": None, "none": None}
 
@@ -83,7 +83,7 @@ class Extractor:
             known_keys_block=format_known_keys(list(known_keys or [])),
             interaction_type=interaction.type,
             ts_iso=interaction.ts.isoformat(),
-            interaction_text=interaction.short_text(),
+            interaction_text=interaction.text,
         )
         payload = self.provider.complete_json(
             system=EXTRACTOR_SYSTEM_PROMPT,
@@ -110,7 +110,7 @@ class Extractor:
         prompt = EXTRACTOR_USER_PROMPT_TEMPLATE.format(
             known_keys_block=format_known_keys(list(known_keys or [])),
             interaction_type=segment.type,
-            ts_iso=segment.ts.isoformat(),
+            ts_iso="unknown" if all(i.meta.get("timestamp_missing") for i in segment.interactions) else segment.ts.isoformat(),
             interaction_text=segment.text(max_chars=max_chars),
         )
         payload = self.provider.complete_json(
@@ -119,12 +119,12 @@ class Extractor:
             schema=EXTRACTION_SCHEMA,
             temperature=0.2,
         )
-        source_id = stable_id("seg_", segment.id)
+        segment_source = source_id(segment)
         update = self.validate(
-            payload, source_id=source_id, ts=segment.ts,
+            payload, source_id=segment_source, ts=segment.ts,
             participants=segment.participants,
         )
-        update["episodes"] = self._episode(payload, segment, source_id)
+        update["episodes"] = self._episode(payload, segment, segment_source)
         return update
 
     def _episode(self, payload: dict, segment: Segment, source_id: str) -> list[Episode]:
@@ -182,11 +182,21 @@ class Extractor:
             "open_loops": [], "observations": [], "episodes": [],
         }
         if not isinstance(data, dict):
+            self.diagnostics = {"rejected_records": 1, "saturated": []}
             return out
 
         stamp = {"ts": ts} if ts is not None else {}
         who = list(participants or [])
 
+        raw_counts = {}
+        saturated = []
+        for bucket in ("facts", "prefs", "entities", "open_loops", "observations"):
+            raw = data.get(bucket) or []
+            raw_counts[bucket] = len(raw) if isinstance(raw, list) else 1
+            if isinstance(raw, list) and len(raw) >= ARRAY_LIMITS[bucket]:
+                saturated.append(bucket)
+            if not isinstance(raw, list):
+                data = {**data, bucket: []}
         for bucket, model in (("facts", Fact), ("prefs", Preference)):
             # The schema bounds these arrays; this slice covers a provider
             # that ignores maxItems, so the loop failure cannot re-enter here.
@@ -239,11 +249,13 @@ class Extractor:
                         text=item["text"],
                         when=item.get("when", "") or "",
                         source=source_id,
-                        participants=who,
+                        participants=[p for p in who if match_names(item["text"], [p])],
                         **stamp,
                     )
                 )
             except (ValidationError, KeyError, TypeError, ValueError):
                 continue
 
+        self.diagnostics = {"rejected_records": sum(max(0, n - len(out[b])) for b, n in raw_counts.items()),
+                            "saturated": saturated}
         return out

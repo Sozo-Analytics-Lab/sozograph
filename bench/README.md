@@ -1,3 +1,36 @@
+# Resumable evaluation in 0.3.2
+
+Prefer python -m bench.evaluate for new runs. Supply --dataset locomo or
+longmemeval, --data, --extractor, --answerer, --judge, and optionally --out.
+Use --dry-run before model calls. Credentials use provider environment settings;
+the Python provider_factory argument supports custom transports.
+
+--stage build constructs memory; recall requires completed construction and runs
+offline; answer reuses construction; judge requires cached predictions; all runs
+missing stages. Reuse the same output directory. Changing read options reuses
+construction, changing the answerer reuses recall, and changing the judge reuses
+predictions. Code changes deliberately invalidate caches.
+
+--system lexical retrieves source chunks without extraction. full_context uses
+all history and is not constrained to the memory budget. sozograph applies the
+budget. --retention full --include-sources and --graph are optional ablations.
+Report their actual storage, calls, and tokens alongside accuracy.
+
+Artifacts retain normalized history, passports, stage costs/timing, selected
+contexts, answers before judging, judgments, and code/dataset hashes. Incomplete
+construction cannot produce a final complete score. Coverage is source membership,
+not semantic answer presence; absent annotations yield null. Gold has_answer
+labels never enter LongMemEval history. Exported hypotheses JSONL works with its
+official evaluator; the included equivalence judge is a different labeled protocol.
+
+bench.replay.paired_bootstrap resamples matched conversation groups.
+python -m bench.profile measures synthetic offline latency and storage, not QA.
+
+The legacy LoCoMo CLI documentation follows. It now preserves unjudged predictions
+on partial grading; the new CLI provides stage replay and evidence diagnostics.
+
+---
+
 # Benchmarks
 
 ## LoCoMo

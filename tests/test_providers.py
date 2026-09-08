@@ -165,7 +165,7 @@ def test_openai_degrades_to_json_object_on_schema_incompatible_models(monkeypatc
         def create(self, **kw):
             calls.append(kw)
             if kw["response_format"]["type"] == "json_schema":
-                exc = Exception(
+                exc = RuntimeError(
                     "Error code: 400 - {'error': {'message': \"Failed to validate JSON. "
                     "Please adjust your prompt. See 'failed_generation' for more details.\", "
                     "'type': 'invalid_request_error', 'code': 'json_validate_failed', "
@@ -205,7 +205,7 @@ def test_openai_degrades_to_json_object_on_schema_incompatible_models(monkeypatc
 
 def _openai_rate_limit_error(status_code: int = 429, retry_after_ms: float = 10.0) -> Exception:
     # Groq's actual 429 body: no structured retry-after, just prose like this.
-    exc = Exception(
+    exc = RuntimeError(
         f"Error code: {status_code} - rate limit reached. "
         f"Please try again in {retry_after_ms}ms."
     )
@@ -264,7 +264,7 @@ def test_openai_gives_up_after_max_rate_limit_retries(fake_openai_flaky):
     state, sleeps = fake_openai_flaky(failures=999)
     p = get_provider("openai:x", api_key="k", base_url="http://localhost:8000/v1")
 
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         p.complete_json(system="s", user="u", schema=SCHEMA)
     # 1 initial attempt + 30 retries, per _MAX_RATE_LIMIT_RETRIES.
     assert state["calls"] == 31
@@ -365,7 +365,7 @@ def test_gemini_schema_strips_unsupported_keywords(fake_gemini, captured):
 def _retryable_error(code: int, retry_delay: str | None = "0.01s") -> Exception:
     # 429 (quota) carries a structured RetryInfo with a suggested delay; 503
     # (transient overload) typically does not, per Gemini's actual error shape.
-    exc = Exception(f"{code} error")
+    exc = RuntimeError(f"{code} error")
     exc.code = code
     exc.details = {"error": {"details": []}}
     if retry_delay is not None:
@@ -433,7 +433,7 @@ def test_gemini_gives_up_after_max_rate_limit_retries(fake_gemini_flaky):
     state, sleeps = fake_gemini_flaky(failures=999)
     p = get_provider("gemini:gemini-2.5-flash", api_key="k")
 
-    with pytest.raises(Exception):
+    with pytest.raises(RuntimeError):
         p.complete_json(system="s", user="u", schema=SCHEMA)
     # 1 initial attempt + 30 retries, per _MAX_RATE_LIMIT_RETRIES.
     assert state["calls"] == 31
@@ -448,7 +448,7 @@ def test_gemini_fails_fast_on_spend_cap_429(monkeypatch, captured):
     class Models:
         def generate_content(self, **kw):
             state["calls"] += 1
-            exc = Exception(
+            exc = RuntimeError(
                 "429 RESOURCE_EXHAUSTED. Your billing account has exceeded its "
                 "monthly spending cap. Please go to AI Studio to manage billing."
             )

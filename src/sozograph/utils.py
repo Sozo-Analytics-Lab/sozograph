@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -53,7 +54,7 @@ def parse_ts(value: Any) -> datetime | None:
 # Key normalization
 # -----------------------------
 
-_KEY_RE = re.compile(r"[^a-z0-9]+")
+_KEY_RE = re.compile(r"[\W_]+", re.UNICODE)
 
 
 def normalize_key(value: str) -> str:
@@ -62,7 +63,7 @@ def normalize_key(value: str) -> str:
     """
     if not value:
         return ""
-    value = value.strip().lower()
+    value = unicodedata.normalize("NFKC", value).strip().casefold()
     value = _KEY_RE.sub("_", value)
     value = value.strip("_")
     return value

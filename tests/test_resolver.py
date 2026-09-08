@@ -150,14 +150,14 @@ def test_observations_are_append_only_with_text_dedupe():
     # it; participants union and the earliest timestamp is kept.
     again = [
         Observation(text="  oliver hid his BONE in the slipper ",
-                    ts=dt("2026-02-01T09:00:00Z"), source="t2", participants=["Oliver"]),
+                    ts=dt("2026-02-02T09:00:00Z"), source="t2", participants=["Oliver"]),
     ]
     out, stats = merge_passport_update(out, observations=again)
     assert len(out.observations) == 2
     assert stats.observations_added == 0
     kept = next(o for o in out.observations if "bone" in o.text.lower())
     assert set(p.lower() for p in kept.participants) == {"melanie", "oliver"}
-    assert kept.ts == dt("2026-02-01T09:00:00Z")  # earliest observation wins
+    assert kept.ts == dt("2026-02-02T09:00:00Z")  # earliest same-day observation wins
 
 
 def _merge_obs(p: Passport, text: str, **kw):
@@ -176,7 +176,7 @@ def test_near_duplicate_merges_on_full_conjunction():
         participants=["Melanie"], when="2026-04-18",
     )
     p, stats = _merge_obs(
-        p, "Melanie hiked the waterfall overlook trail",
+        p, "Melanie hiked a trail to a waterfall overlook",
         ts=dt("2026-05-20T10:00:00Z"), source="t2",
         participants=["Melanie"], when="2026-04-18",
     )
@@ -207,7 +207,7 @@ def test_near_duplicate_without_participant_evidence_is_kept():
         ts=dt("2026-05-01T10:00:00Z"), source="t1",
     )
     p, stats = _merge_obs(
-        p, "Melanie hiked the waterfall overlook trail",
+        p, "Melanie hiked a trail to a waterfall overlook",
         ts=dt("2026-05-20T10:00:00Z"), source="t2",
         participants=["Caroline"],
     )

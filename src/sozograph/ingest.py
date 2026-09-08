@@ -186,7 +186,7 @@ def coerce_to_interactions(
                 text=item,
                 source=src_ptr,
                 data=None,
-                meta=meta,
+                meta={**meta, "timestamp_missing": parse_ts(meta.get("ts")) is None},
             )
         )
         sources.append(
@@ -221,6 +221,7 @@ def coerce_to_interactions(
             ts = (parse_ts(pick_first(item, ("ts", "timestamp", "time", "date")))
                   or parse_ts(meta.get("ts")) or utcnow())
             turn_meta = dict(meta)
+            turn_meta["timestamp_missing"] = not (parse_ts(pick_first(item, ("ts", "timestamp", "time", "date"))) or parse_ts(meta.get("ts")))
             if speaker:
                 turn_meta["speaker"] = str(speaker)
             session = pick_first(item, ("session", "session_id", "thread_id"))
@@ -444,7 +445,7 @@ def apply_fallback_summaries(
             ts_iso=it.ts.isoformat(),
         )
 
-        it.text = improved[: cfg.max_interaction_chars] if improved else it.text
+        it.text = improved if improved else it.text
         out.append(it)
 
     return out

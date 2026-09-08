@@ -252,7 +252,7 @@ def test_passport_is_plain_readable_json(graph, tmp_path):
     passport.save(path)
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    assert raw["version"] == "2.1"
+    assert raw["version"] == "2.2"
     assert isinstance(raw["facts"], list)
     assert path.stat().st_size < 20_000, "a passport should stay small"
 

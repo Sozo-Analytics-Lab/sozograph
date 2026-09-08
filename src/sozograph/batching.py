@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from .interaction import Interaction
-from .utils import stable_id
+from .utils import sha256_json, stable_id
 
 #: Characters per token. Deliberately conservative so a segment lands under the
 #: budget rather than over it.
@@ -72,9 +72,8 @@ class Segment:
         """The segment as one block, speaker-prefixed where known."""
         lines = []
         for it in self.interactions:
-            speaker = (it.meta or {}).get("speaker")
             body = it.text.strip()
-            lines.append(f"{speaker}: {body}" if isinstance(speaker, str) and speaker else body)
+            lines.append(turn_prefix(it) + body)
         joined = "\n".join(lines)
         if max_chars is not None and len(joined) > max_chars:
             return joined[: max_chars - 1] + "…"
@@ -95,9 +94,54 @@ def _rendered_size(it: Interaction) -> int:
     speaker prefix and a newline per turn, so segments overran the budget by
     the width of the prefixes.
     """
-    speaker = (it.meta or {}).get("speaker")
-    prefix = len(speaker) + 2 if isinstance(speaker, str) and speaker else 0
-    return len(it.text.strip()) + prefix + 1
+    return len(it.text.strip()) + len(turn_prefix(it)) + 1
+
+
+def turn_prefix(it: Interaction) -> str:
+    speaker = str(it.meta.get("speaker") or "")
+    when = "time unknown" if it.meta.get("timestamp_missing") else it.ts.isoformat()
+    return f"[{it.id or 'turn'} {when}] " + (f"{speaker}: " if speaker else "")
+
+
+def interaction_identity(it: Interaction) -> dict:
+    return {"id": it.id, "text": it.text, "speaker": it.meta.get("speaker"),
+            "session": _session_of(it), "source": it.source, "origin": it.meta.get("source_id"), "kind": it.type,
+            "ts": None if it.meta.get("timestamp_missing") else it.ts.isoformat(),
+            "span": [it.meta.get("span_start"), it.meta.get("span_end")]}
+
+
+def source_id(segment: Segment) -> str:
+    return segment.id
+
+
+def split_interaction(it: Interaction, max_chars: int, *, overlap: int = 80) -> list[Interaction]:
+    """Cover every character, preserving exact parent offsets and overlap."""
+    available = max_chars - len(turn_prefix(it)) - 100
+    if available < 32:
+        raise ValueError("Segment budget is too small for turn metadata")
+    if _rendered_size(it) <= max_chars:
+        return [it]
+    parent = it.meta.get("parent_id") or it.id or sha256_json(interaction_identity(it))
+    origin = int(it.meta.get("span_start", 0))
+    overlap = min(max(0, overlap), available // 4)
+    out, start = [], 0
+    while start < len(it.text):
+        end = min(len(it.text), start + available)
+        if end < len(it.text):
+            boundary = max(it.text.rfind("\n", start + available // 2, end),
+                           it.text.rfind(". ", start + available // 2, end),
+                           it.text.rfind(" ", start + available // 2, end))
+            if boundary > start:
+                end = boundary + 1
+        child = it.model_copy(deep=True)
+        child.text = it.text[start:end]
+        child.id = stable_id("turn_", [parent, origin + start, origin + end], length=24)
+        child.meta.update(parent_id=parent, span_start=origin + start, span_end=origin + end)
+        out.append(child)
+        if end == len(it.text):
+            break
+        start = end - overlap
+    return out
 
 
 def _session_of(it: Interaction) -> str | None:
@@ -128,8 +172,11 @@ def segment_interactions(
     if not interactions:
         return []
 
-    ordered = sorted(interactions, key=lambda i: i.ts)
-    budget_chars = max(1, int(max_tokens * CHARS_PER_TOKEN))
+    if max_tokens <= 0:
+        raise ValueError("max_tokens must be positive")
+    budget_chars = min(11_500, int(max_tokens * CHARS_PER_TOKEN))
+    ordered = sorted([part for it in interactions for part in split_interaction(it, budget_chars)],
+                     key=lambda i: i.ts)
 
     segments: list[Segment] = []
     current: list[Interaction] = []
@@ -141,7 +188,7 @@ def segment_interactions(
         if current:
             segments.append(
                 Segment(
-                    id=stable_id("seg_", [i.text for i in current]),
+                    id=stable_id("seg2_", [interaction_identity(i) for i in current], length=32),
                     interactions=current,
                     boundary_reason=reason,
                 )

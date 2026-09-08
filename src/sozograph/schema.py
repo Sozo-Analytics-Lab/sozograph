@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import tempfile
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 JSONValue = str | int | float | bool | None | dict[str, Any] | list[Any]
 
@@ -22,8 +25,42 @@ def _iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
-class Fact(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class PortableModel(BaseModel):
+    """Storage is extensible; extraction uses its own strict wire schema."""
+    model_config = ConfigDict(extra="allow")
+
+    @field_validator("*", mode="after")
+    @classmethod
+    def _aware(cls, value):
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=value.tzinfo or timezone.utc).astimezone(timezone.utc)
+        return value
+
+    def to_compact(self) -> dict[str, Any]:
+        return self.model_dump(mode="json", exclude_defaults=True)
+
+
+class EvidenceRef(PortableModel):
+    source: str
+    turn_id: str
+    part_id: str = ""
+    quote: str = ""
+    start: int | None = None
+    end: int | None = None
+    match: Literal["exact", "candidate"] = "candidate"
+    score: float = Field(0.0, ge=0, le=1)
+
+
+class MemoryRecord(PortableModel):
+    evidence: list[EvidenceRef] = Field(default_factory=list)
+    source_ids: list[str] = Field(default_factory=list)
+
+
+class Fact(MemoryRecord):
+    model_config = ConfigDict(extra="allow")
+
+    subject: str = ""
+    status: Literal["active", "disputed"] = "active"
 
     key: str = Field(..., min_length=1)
     value: JSONValue
@@ -41,20 +78,15 @@ class Fact(BaseModel):
 
     def search_text(self) -> str:
         """Everything worth matching a query against."""
-        return f"{self.key} {self.value}"
-
-    def to_compact(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "ts": _iso(self.ts),
-            "confidence": float(self.confidence),
-            "source": self.source,
-        }
+        return f"{self.subject} {self.key} {self.value}"
 
 
-class Preference(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+
+class Preference(MemoryRecord):
+    model_config = ConfigDict(extra="allow")
+
+    subject: str = ""
+    status: Literal["active", "disputed"] = "active"
 
     key: str = Field(..., min_length=1)
     value: JSONValue
@@ -72,16 +104,8 @@ class Preference(BaseModel):
 
     def search_text(self) -> str:
         """Everything worth matching a query against."""
-        return f"{self.key} {self.value}"
+        return f"{self.subject} {self.key} {self.value}"
 
-    def to_compact(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "value": self.value,
-            "ts": _iso(self.ts),
-            "confidence": float(self.confidence),
-            "source": self.source,
-        }
 
 
 #: Single source of truth for entity types. prompts.py builds the JSON Schema
@@ -111,8 +135,8 @@ EntityType = Literal[
 ]
 
 
-class Entity(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class Entity(MemoryRecord):
+    model_config = ConfigDict(extra="allow")
 
     name: str = Field(..., min_length=1)
     type: EntityType = Field("other")
@@ -139,14 +163,9 @@ class Entity(BaseModel):
         parts = [self.name, self.type, " ".join(self.aliases)]
         return " ".join(p for p in parts if p)
 
-    def to_compact(self) -> dict[str, Any]:
-        d = {"name": self.name, "type": self.type}
-        if self.aliases:
-            d["aliases"] = list(self.aliases)
-        return d
 
 
-class Observation(BaseModel):
+class Observation(MemoryRecord):
     """
     One atomic thing that was said or happened, kept verbatim in meaning.
 
@@ -166,7 +185,7 @@ class Observation(BaseModel):
     else.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     text: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
@@ -175,10 +194,23 @@ class Observation(BaseModel):
     #: which is what a temporal question asks about; `ts` is discussion time,
     #: the segment the statement was extracted from.
     when: str = ""
+    when_end: str = ""
+    precision: Literal["unknown", "day", "month", "year", "range"] = "unknown"
     source: str = Field(..., min_length=1)
     participants: list[str] = Field(default_factory=list)
 
-    @field_validator("when")
+    @model_validator(mode="before")
+    @classmethod
+    def _date_precision(cls, data):
+        from .temporal import event_interval
+        if isinstance(data, dict) and data.get("when"):
+            interval = event_interval(data["when"], data.get("ts"))
+            if interval:
+                start, end, precision = interval
+                data = {**data, "when": start, "when_end": end, "precision": precision}
+        return data
+
+    @field_validator("when", "when_end")
     @classmethod
     def _norm_when(cls, v: str) -> str:
         """Normalize to an ISO date string, or drop whatever cannot be one."""
@@ -198,6 +230,14 @@ class Observation(BaseModel):
         except ValueError:
             return ""
 
+    @model_validator(mode="after")
+    def _interval(self):
+        if self.when_end and (not self.when or self.when_end < self.when):
+            raise ValueError("when_end requires an ordered event interval")
+        if self.when and self.precision == "unknown":
+            self.precision = "range" if self.when_end else "day"
+        return self
+
     @field_validator("participants")
     @classmethod
     def _clean_participants(cls, v: list[str]) -> list[str]:
@@ -216,17 +256,13 @@ class Observation(BaseModel):
         parts = [self.text, self.when, " ".join(self.participants)]
         return " ".join(p for p in parts if p)
 
-    def to_compact(self) -> dict[str, Any]:
-        d: dict[str, Any] = {"text": self.text, "ts": _iso(self.ts), "source": self.source}
-        if self.when:
-            d["when"] = self.when
-        if self.participants:
-            d["participants"] = list(self.participants)
-        return d
 
 
-class OpenLoop(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class OpenLoop(MemoryRecord):
+    model_config = ConfigDict(extra="allow")
+
+    subject: str = ""
+    status: Literal["open", "completed", "cancelled"] = "open"
 
     item: str = Field(..., min_length=1)
     ts: datetime = Field(default_factory=utcnow)
@@ -236,12 +272,13 @@ class OpenLoop(BaseModel):
         """Everything worth matching a query against."""
         return self.item
 
-    def to_compact(self) -> dict[str, Any]:
-        return {"item": self.item, "ts": _iso(self.ts), "source": self.source}
 
 
-class Contradiction(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class Contradiction(MemoryRecord):
+    model_config = ConfigDict(extra="allow")
+
+    subject: str = ""
+    status: Literal["resolved", "disputed"] = "resolved"
 
     key: str
     old: JSONValue
@@ -255,19 +292,9 @@ class Contradiction(BaseModel):
         """Everything worth matching a query against."""
         return f"{self.key} {self.old} {self.new}"
 
-    def to_compact(self) -> dict[str, Any]:
-        return {
-            "key": self.key,
-            "old": self.old,
-            "new": self.new,
-            "ts_old": _iso(self.ts_old),
-            "ts_new": _iso(self.ts_new),
-            "source_old": self.source_old,
-            "source_new": self.source_new,
-        }
 
 
-class Episode(BaseModel):
+class Episode(MemoryRecord):
     """
     What happened, and when.
 
@@ -282,7 +309,7 @@ class Episode(BaseModel):
     degrades episodic recall rather than losing a fact outright.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     id: str
     ts: datetime = Field(default_factory=utcnow)
@@ -292,19 +319,6 @@ class Episode(BaseModel):
     salience: float = Field(0.5, ge=0.0, le=1.0)
     source: str = Field(..., min_length=1)
 
-    def to_compact(self) -> dict[str, Any]:
-        d: dict[str, Any] = {
-            "id": self.id,
-            "ts": _iso(self.ts),
-            "summary": self.summary,
-            "salience": round(float(self.salience), 3),
-            "source": self.source,
-        }
-        if self.participants:
-            d["participants"] = list(self.participants)
-        if self.keywords:
-            d["keywords"] = list(self.keywords)
-        return d
 
     def search_text(self) -> str:
         """Everything worth matching a query against."""
@@ -323,8 +337,15 @@ SourceKind = Literal[
 ]
 
 
-class SourceRef(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class SourceRef(PortableModel):
+    model_config = ConfigDict(extra="allow")
+
+    text: str = ""
+    turns: list[dict[str, Any]] = Field(default_factory=list)
+    turn_ids: list[str] = Field(default_factory=list)
+    retention: Literal["none", "excerpts", "full"] = "none"
+    coverage: Literal["none", "partial", "full"] = "none"
+    parent: str | None = None
 
     id: str
     kind: SourceKind = Field("unknown")
@@ -332,19 +353,13 @@ class SourceRef(BaseModel):
     hash: str | None = None
     source: str | None = None
 
-    def to_compact(self) -> dict[str, Any]:
-        d = {"id": self.id, "kind": self.kind, "ts": _iso(self.ts)}
-        if self.hash:
-            d["hash"] = self.hash
-        if self.source:
-            d["source"] = self.source
-        return d
 
 
-PASSPORT_VERSION = "2.1"
+PASSPORT_VERSION = "2.2"
+SUPPORTED_VERSIONS = {"1.0", "2.0", "2.1", PASSPORT_VERSION}
 
 
-class Passport(BaseModel):
+class Passport(PortableModel):
     """
     A portable memory snapshot.
 
@@ -357,7 +372,11 @@ class Passport(BaseModel):
     embedding model to match.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
+
+    _future_raw: dict[str, Any] | None = PrivateAttr(default=None)
+    _future_state: dict[str, Any] | None = PrivateAttr(default=None)
+    ingest_report: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
     version: str = Field(PASSPORT_VERSION)
     updated_at: datetime = Field(default_factory=utcnow)
@@ -403,7 +422,12 @@ class Passport(BaseModel):
 
     def to_compact_dict(self) -> dict[str, Any]:
         """The portable form. Empty sections are omitted to keep it small."""
+        if self._future_raw is not None:
+            if self.model_dump(mode="json") != self._future_state:
+                raise ValueError("Cannot mutate an unsupported passport version")
+            return deepcopy(self._future_raw)
         d: dict[str, Any] = {
+            **deepcopy(self.model_extra or {}),
             "version": self.version,
             "updated_at": _iso(self.updated_at),
         }
@@ -435,25 +459,26 @@ class Passport(BaseModel):
         if not isinstance(data, dict):
             raise TypeError(f"Passport.from_dict expects a dict, got {type(data).__name__}")
 
-        known = set(cls.model_fields) - {"stats"}
-        payload = {k: v for k, v in data.items() if k in known}
-        payload.setdefault("version", PASSPORT_VERSION)
-        for section in ("facts", "prefs", "entities", "open_loops",
-                        "contradictions", "episodes", "observations", "sources"):
-            payload.setdefault(section, [])
-        payload.setdefault("meta", {})
-
-        extra = {k: v for k, v in data.items() if k not in known}
-        if extra:
-            # Keep anything a newer writer added so a round trip is lossless.
-            payload["meta"] = {**payload["meta"], "_unknown": extra}
-
-        passport = cls(**payload)
-        passport.version = PASSPORT_VERSION
-        return passport
+        payload = deepcopy(data)
+        version = str(payload.get("version", "1.0"))
+        if version not in SUPPORTED_VERSIONS:
+            passport = cls(version=version)
+            passport._future_raw = payload
+            passport._future_state = passport.model_dump(mode="json")
+            return passport
+        # Earlier writers stashed extension fields under meta._unknown.
+        unknown = payload.get("meta", {}).get("_unknown", {})
+        if isinstance(unknown, dict):
+            for key, value in unknown.items():
+                if key not in cls.model_fields:
+                    payload.setdefault(key, deepcopy(value))
+        payload.pop("stats", None)
+        payload.pop("ingest_report", None)
+        payload["version"] = PASSPORT_VERSION
+        return cls(**payload)
 
     def to_json(self, *, indent: int | None = 2) -> str:
-        return json.dumps(self.to_compact_dict(), indent=indent, ensure_ascii=False)
+        return json.dumps(self.to_compact_dict(), indent=indent, ensure_ascii=False, allow_nan=False, separators=(",", ":") if indent is None else None)
 
     @classmethod
     def from_json(cls, text: str) -> Passport:
@@ -469,9 +494,18 @@ class Passport(BaseModel):
         target = Path(path)
         if target.parent and not target.parent.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
-        tmp = target.with_name(target.name + ".tmp")
-        tmp.write_text(self.to_json(), encoding="utf-8")
-        os.replace(tmp, target)
+        name = None
+        try:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=target.parent,
+                                             prefix=target.name + ".", suffix=".tmp", delete=False) as stream:
+                name = stream.name
+                stream.write(self.to_json())
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(name, target)
+        finally:
+            if name and os.path.exists(name):
+                os.unlink(name)
 
     @classmethod
     def load(cls, path: Any) -> Passport:
@@ -486,6 +520,7 @@ class Passport(BaseModel):
         query: str | None = None,
         budget_chars: int = 6000,
         header: str = "SOZOGRAPH PASSPORT",
+        **kwargs: Any,
     ) -> str:
         """
         Render this passport as a context block for a prompt.
@@ -495,7 +530,7 @@ class Passport(BaseModel):
         """
         from .render import export_context
 
-        return export_context(self, query=query, budget_chars=budget_chars, header=header)
+        return export_context(self, query=query, budget_chars=budget_chars, header=header, **kwargs)
 
     def token_estimate(self) -> int:
         """Rough token count of the serialized passport (~4 chars per token)."""
@@ -506,11 +541,63 @@ class Passport(BaseModel):
                     or self.open_loops or self.episodes or self.observations)
 
     def upsert_source(self, src: SourceRef) -> None:
+        self.assert_supported()
         for i, existing in enumerate(self.sources):
             if existing.id == src.id:
                 self.sources[i] = src
                 return
         self.sources.append(src)
 
-    def touch(self) -> None:
-        self.updated_at = utcnow()
+    def assert_supported(self) -> None:
+        if self.version != PASSPORT_VERSION or self._future_raw is not None:
+            raise ValueError(f"Unsupported passport version {self.version}; round-trip only")
+
+    def touch(self, now: datetime | None = None) -> None:
+        self.assert_supported()
+        self.updated_at = now or utcnow()
+
+    def canonical_json(self) -> str:
+        payload = self.to_compact_dict()
+        payload.pop("updated_at", None)
+        # Operational diagnostics are excluded, never evidence or extension data.
+        meta = payload.get("meta", {}).copy()
+        for key in ("ingest_failures", "ingest_report"):
+            meta.pop(key, None)
+        if meta:
+            payload["meta"] = meta
+        else:
+            payload.pop("meta", None)
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+
+    def content_hash(self) -> str:
+        return hashlib.sha256(self.canonical_json().encode("utf-8")).hexdigest()
+
+    def audit(self):
+        from .audit import audit
+        return audit(self)
+
+    def recall(self, **kwargs):
+        from .recall import recall
+        return recall(self, **kwargs)
+
+    def forget(self, *, source_ids=None, subject=None, contains=None):
+        from .lifecycle import forget
+        return forget(self, source_ids=source_ids, subject=subject, contains=contains)
+
+    def redact(self, text: str):
+        """Forget records and source groups containing the supplied sensitive text."""
+        return self.forget(contains=text)
+
+    def set_loop_status(self, item: str, status: str, *, subject: str = "", now=None):
+        self.assert_supported()
+        if status not in {"open", "completed", "cancelled"}:
+            raise ValueError("Invalid loop status")
+        found = False
+        for loop in self.open_loops:
+            if loop.item.casefold().strip() == item.casefold().strip() and loop.subject.casefold() == subject.casefold():
+                loop.status = status
+                loop.ts = now or utcnow()
+                found = True
+        if not found:
+            raise KeyError(item)
+        self.touch(now)

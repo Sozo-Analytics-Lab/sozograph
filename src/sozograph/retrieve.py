@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-_TOKEN_RE = re.compile(r"[a-z0-9]+")
+_TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_CJK_RE = re.compile(r"[\u3400-\u9fff\u3040-\u30ff\uac00-\ud7af]")
 
 # Words that match everything and therefore discriminate nothing.
 _STOPWORDS = frozenset("""
@@ -39,7 +41,14 @@ def tokenize(text: str, *, keep_stopwords: bool = False) -> list[str]:
     """Lowercase alphanumeric tokens, stopwords dropped."""
     if not text:
         return []
-    tokens = _TOKEN_RE.findall(str(text).lower())
+    normalized = unicodedata.normalize("NFKC", str(text)).casefold()
+    tokens = []
+    for token in _TOKEN_RE.findall(normalized):
+        if _CJK_RE.search(token):
+            tokens.extend(token)
+            tokens.extend(token[i:i + 2] for i in range(len(token) - 1))
+        else:
+            tokens.append(token)
     if keep_stopwords:
         return tokens
     kept = [t for t in tokens if t not in _STOPWORDS]
@@ -137,7 +146,7 @@ def rank(
     return scored[:limit] if limit is not None else scored
 
 
-_NAME_BOUND_RE_TMPL = r"(?<![a-z0-9]){}(?![a-z0-9])"
+_NAME_BOUND_RE_TMPL = r"(?<![^\W_]){}(?![^\W_])"
 
 
 def match_names(query: str, vocabulary: Iterable[str]) -> list[str]:
@@ -217,14 +226,14 @@ class EntityGraph:
         entire cast of characters; the strongest edges survive the cap.
         """
         start = (name or "").strip().lower()
-        if hops < 1 or start not in self.adjacency:
+        if hops < 1 or limit <= 0 or start not in self.adjacency:
             return []
         visited = {start}
         frontier = {start}
         collected: list[tuple[int, str]] = []
         for _ in range(hops):
             next_frontier: set[str] = set()
-            for node in frontier:
+            for node in sorted(frontier):
                 for neighbor, weight in self.adjacency.get(node, {}).items():
                     if neighbor in visited:
                         continue
@@ -313,9 +322,9 @@ def rank_expanded(
     lifted: list[Scored] = []
     for s in scored:
         text = text_of(items[s.index]).lower()
-        if any(n in text for n in names):
+        if match_names(text, names):
             bonus = _ENTITY_MATCH_BONUS
-        elif neighbor_names and any(n in text for n in neighbor_names):
+        elif neighbor_names and match_names(text, neighbor_names):
             bonus = _GRAPH_NEIGHBOR_BONUS
         else:
             bonus = 0.0

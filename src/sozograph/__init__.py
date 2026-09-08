@@ -16,10 +16,12 @@ from __future__ import annotations
 from .compact import compact
 from .core import SozoGraph
 from .providers import LLMProvider, ProviderError, Usage, get_provider
+from .recall import RecallRecord, RecallResult
 from .schema import (
     Contradiction,
     Entity,
     Episode,
+    EvidenceRef,
     Fact,
     Observation,
     OpenLoop,
@@ -39,6 +41,9 @@ __all__ = [
     "OpenLoop",
     "Contradiction",
     "SourceRef",
+    "EvidenceRef",
+    "RecallRecord",
+    "RecallResult",
     "compact",
     "get_provider",
     "LLMProvider",
@@ -46,4 +51,4 @@ __all__ = [
     "Usage",
 ]
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
