@@ -83,6 +83,7 @@ def _kv_item_schema() -> dict[str, Any]:
         "properties": {
             "key": {
                 "type": "string",
+                "pattern": "\\S",
                 "description": "Short snake_case identifier. Reuse a known key when one fits.",
             },
             "value": {
@@ -109,6 +110,19 @@ def _kv_item_schema() -> dict[str, Any]:
 #: coerces numbers and booleans back), and there is no `ts` or `source` field
 #: because the system already knows both from the interaction. Asking the model
 #: for a timestamp it cannot know was the source of a silent data-loss bug.
+#:
+#: Every required string that the wire model itself requires non-empty
+#: (Fact/Preference.key, Entity.name, OpenLoop.item, Observation.text,
+#: Episode.summary) carries `pattern: "\S"` here too (at least one
+#: non-whitespace character; `minLength` alone would still pass an
+#: all-whitespace string that a `.strip()`-based validator then rejects, and
+#: is outside OpenAI strict mode's supported keyword subset in the first
+#: place -- `pattern` is). Without this, an empty string satisfies
+#: `"type": "string"` under grammar-constrained decoding and reaches
+#: validate() anyway, where it is rejected with no way for the model to have
+#: known why: found via a real Kaggle run's `rejected_reasons`
+#: (`String should have at least 1 character`) on `Observation.text` and
+#: `Entity.name` specifically.
 EXTRACTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -130,7 +144,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
+                    "name": {"type": "string", "pattern": "\\S"},
                     "type": {"type": "string", "enum": list(ENTITY_TYPES)},
                     "aliases": {
                         "type": "array",
@@ -148,7 +162,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
             "description": "Unresolved questions or pending tasks.",
             "items": {
                 "type": "object",
-                "properties": {"item": {"type": "string"}},
+                "properties": {"item": {"type": "string", "pattern": "\\S"}},
                 "required": ["item"],
                 "additionalProperties": False,
             },
@@ -166,6 +180,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                 "properties": {
                     "text": {
                         "type": "string",
+                        "pattern": "\\S",
                         "description": "One self-contained statement, understandable alone.",
                     },
                     "when": {
@@ -189,7 +204,7 @@ EXTRACTION_SCHEMA: dict[str, Any] = {
                 "to answer a question about it later."
             ),
             "properties": {
-                "summary": {"type": "string"},
+                "summary": {"type": "string", "pattern": "\\S"},
                 "participants": {
                     "type": "array",
                     "items": {"type": "string"},

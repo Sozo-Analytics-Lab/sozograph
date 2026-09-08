@@ -65,3 +65,28 @@ def test_schema_stays_inside_openai_strict_subset():
 def test_extractor_prompt_resolves_relative_dates():
     assert "TIMESTAMP" in EXTRACTOR_SYSTEM_PROMPT
     assert "absolute" in EXTRACTOR_SYSTEM_PROMPT.lower()
+
+
+def test_every_required_wire_string_rejects_empty_and_blank():
+    # A real Kaggle run's rejected_reasons showed the model emitting an
+    # empty string for a required field ("String should have at least 1
+    # character") -- syntactically valid JSON, semantically rejected
+    # downstream with nothing to stop it at generation time. `minLength`
+    # would be the obvious fix but is outside OpenAI strict mode's
+    # supported subset (see test above); `pattern` is in it.
+    import re
+
+    props = EXTRACTION_SCHEMA["properties"]
+    checks = [
+        props["facts"]["items"]["properties"]["key"],
+        props["prefs"]["items"]["properties"]["key"],
+        props["entities"]["items"]["properties"]["name"],
+        props["open_loops"]["items"]["properties"]["item"],
+        props["observations"]["items"]["properties"]["text"],
+        props["episode"]["properties"]["summary"],
+    ]
+    for node in checks:
+        pattern = node["pattern"]
+        assert not re.search(pattern, ""), f"{pattern} must reject an empty string"
+        assert not re.search(pattern, "   "), f"{pattern} must reject a whitespace-only string"
+        assert re.search(pattern, "x"), f"{pattern} must accept real content"
