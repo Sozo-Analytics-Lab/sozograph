@@ -173,12 +173,15 @@ def recall(passport, *, query=None, budget_chars=6000, header="SOZOGRAPH PASSPOR
                                source_ids=sids, evidence_ids=sorted(refs))
             if include_citations and sids:
                 row.text += " [source " + ",".join(sids) + "]"
-            event_start = data.get("when") or data.get("ts", "")[:10]
+            event_start = (data.get("when", "") if section == "observations"
+                           else data.get("when") or data.get("ts", "")[:10])
             event_end = data.get("when_end") or event_start
             if wanted and not named & wanted:
                 row.reason = "subject filter"
             elif section == "open_loops" and data.get("status", "open") != "open":
                 row.reason = "closed loop"
+            elif (date_from or date_to) and section == "observations" and not event_start:
+                row.reason = "unknown event time"
             elif (date_from or date_to) and (not event_start or (date_from and event_end < date_from)
                                             or (date_to and event_start > date_to)):
                 row.reason = "time filter"
