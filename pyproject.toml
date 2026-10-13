@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sozograph"
-version = "0.3.2"
-description = "Portable JSON memory for LLM agents. No vector DB, no embeddings, any provider."
+version = "0.4.0"
+description = "The portable memory layer for agents: one passport, a visa per agent, every write a stamp."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
   { name = "Rairo Mukamuri" }
 ]
-keywords = ["memory", "agents", "llm", "context", "passport", "rag", "knowledge"]
+keywords = ["memory", "agents", "llm", "mcp", "passport", "crdt", "portable-memory", "agent-skills"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -44,8 +44,15 @@ all = [
   "google-genai>=0.6.0",
   "ollama>=0.4.0",
 ]
+mcp = ["mcp>=2.3"]
+sign = ["cryptography>=42"]
+firestore = ["google-cloud-firestore>=2.16"]
+server = ["mcp>=2.3", "cryptography>=42", "google-cloud-firestore>=2.16"]
 bench = ["openai>=1.40.0", "tqdm>=4.66.0"]
-dev = ["pytest>=8.0.0", "ruff>=0.6.0"]
+dev = ["pytest>=8.0.0", "ruff>=0.6.0", "mcp>=2.3", "cryptography>=42"]
+
+[project.scripts]
+sozograph = "sozograph.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/Sozo-Analytics-Lab/sozograph"
@@ -58,6 +65,12 @@ packages = ["src/sozograph"]
 [tool.hatch.build.targets.sdist]
 include = [
   "src/sozograph/**",
+  "skills/**",
+  "plugins/**",
+  "connectors/**",
+  "PROTOCOL.md",
+  "SECURITY.md",
+  "CONNECTORS.md",
   "README.md",
   "LICENSE",
   "pyproject.toml",
@@ -69,6 +82,7 @@ include = [
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = ["bench/relay/pc_core.py"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

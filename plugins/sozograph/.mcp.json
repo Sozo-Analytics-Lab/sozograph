@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sozograph": {
+      "command": "sozograph",
+      "args": [
+        "serve", "--stdio",
+        "--passport", "${user_config.passport}",
+        "--agent", "claude-code",
+        "--domains", "${user_config.domains}"
+      ]
+    }
+  }
+}

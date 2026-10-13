@@ -37,7 +37,14 @@ class PortableModel(BaseModel):
         return value
 
     def to_compact(self) -> dict[str, Any]:
-        return self.model_dump(mode="json", exclude_defaults=True)
+        data = self.model_dump(mode="json", exclude_defaults=True)
+        # exclude_defaults compares a default_factory field against a fresh call.
+        # A timestamp equal to "now" at dump time (common on coarse clocks)
+        # would vanish and reload as a different time, so timestamps always stay.
+        for name, field in type(self).model_fields.items():
+            if field.default_factory is utcnow and name not in data and getattr(self, name) is not None:
+                data[name] = self.model_dump(mode="json", include={name})[name]
+        return data
 
 
 class EvidenceRef(PortableModel):
@@ -54,6 +61,16 @@ class EvidenceRef(PortableModel):
 class MemoryRecord(PortableModel):
     evidence: list[EvidenceRef] = Field(default_factory=list)
     source_ids: list[str] = Field(default_factory=list)
+    # Passport 3.1 governance. A log-backed passport fills these from the
+    # stamps that produced the record; empty values stay off disk.
+    stamp_ids: list[str] = Field(default_factory=list)
+    author: str = ""
+    origin: str = ""
+    domains: list[str] = Field(default_factory=list)
+    kind: str = ""
+    valid_from: str = ""
+    valid_until: str = ""
+    sensitivity: int | None = Field(None, ge=0, le=3)
 
 
 class Fact(MemoryRecord):
@@ -355,8 +372,119 @@ class SourceRef(PortableModel):
 
 
 
-PASSPORT_VERSION = "2.2"
-SUPPORTED_VERSIONS = {"1.0", "2.0", "2.1", PASSPORT_VERSION}
+#: Who a claim came from, lowest trust first. user_confirmed is reserved for
+#: the holder's own confirmations; imported for vendor and 2.x imports.
+ORIGINS = ("third_party", "tool_result", "imported", "agent_inferred", "user_confirmed", "user_direct")
+ORIGIN_RANK = {"third_party": 0, "tool_result": 1, "imported": 2, "agent_inferred": 3,
+               "user_confirmed": 4, "user_direct": 4}
+OPS = ("assert", "supersede", "correct", "retract", "confirm", "forget", "expire")
+STAMP_SECTIONS = ("facts", "prefs", "entities", "open_loops", "episodes", "observations", "contradictions")
+
+Origin = Literal["third_party", "tool_result", "imported", "agent_inferred", "user_confirmed", "user_direct"]
+Op = Literal["assert", "supersede", "correct", "retract", "confirm", "forget", "expire"]
+
+
+class Stamp(PortableModel):
+    """
+    One write to a log-backed passport.
+
+    The stamp log is the source of truth of a Passport 3.1 file. Every section
+    is a deterministic projection of it, so two replicas holding the same
+    stamps hold the same beliefs. `id` is a content address; `admission`,
+    `sig` and `redacted` sit outside it, because they are the receiving
+    replica's verdict, its attestation and the holder's erasure, joined on merge.
+    """
+
+    id: str = ""
+    op: Op = "assert"
+    section: str = ""
+    claim: dict[str, Any] = Field(default_factory=dict)
+    targets: list[str] = Field(default_factory=list)
+    author: str = Field(..., min_length=1)
+    visa: str = ""
+    origin: Origin = "agent_inferred"
+    hlc: str = ""
+    seen: str = ""
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    reason: str = ""
+    erase_sources: list[str] = Field(default_factory=list)
+    admission: Literal["accepted", "quarantined"] = "accepted"
+    admission_reason: str = ""
+    sig: str = ""
+    redacted: bool = False
+
+
+class AgentRecord(PortableModel):
+    """An agent that has held a visa: who it is and what it is good at."""
+
+    id: str = Field(..., min_length=1)
+    name: str = ""
+    vendor: str = ""
+    model: str = ""
+    home_domains: list[str] = Field(default_factory=list)
+    first_seen: datetime | None = None
+    last_seen: datetime | None = None
+
+
+class Visa(PortableModel):
+    """
+    One agent's permission to read and write part of a passport.
+
+    The secret token never touches the file; only its SHA-256 does. The token
+    is available once, on the object `issue()` returns.
+    """
+
+    id: str = Field(..., min_length=1)
+    agent: str = Field(..., min_length=1)
+    domains: list[str] = Field(default_factory=lambda: ["general"])
+    include_general: bool = True
+    write: bool = False
+    forget: bool = False
+    sensitivity_ceiling: int = Field(1, ge=0, le=2)
+    purpose: str = ""
+    issued_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    token_sha256: str = ""
+    _token: str | None = PrivateAttr(default=None)
+
+    @property
+    def token(self) -> str | None:
+        """The bearer secret, present only on the object issue() returned."""
+        return self._token
+
+    def active(self, now: datetime | None = None) -> bool:
+        moment = now or utcnow()
+        if self.revoked_at is not None and self.revoked_at <= moment:
+            return False
+        return self.expires_at is None or moment < self.expires_at
+
+    def sees_domain(self, domains: list[str]) -> bool:
+        wanted = set(domains or ["general"])
+        allowed = set(self.domains)
+        if "*" in allowed:
+            return True
+        if self.include_general:
+            allowed.add("general")
+        return bool(wanted & allowed)
+
+    @classmethod
+    def issue(cls, passport: Passport, *, agent: str, domains: list[str] | None = None,
+              write: bool = False, forget: bool = False, sensitivity_ceiling: int = 1,
+              purpose: str = "", expires_at: datetime | None = None, name: str = "",
+              vendor: str = "", model: str = "", include_general: bool = True,
+              now: datetime | None = None) -> Visa:
+        from .visa import issue_visa
+        return issue_visa(passport, agent=agent, domains=domains, write=write, forget=forget,
+                          sensitivity_ceiling=sensitivity_ceiling, purpose=purpose,
+                          expires_at=expires_at, name=name, vendor=vendor, model=model,
+                          include_general=include_general, now=now)
+
+
+PASSPORT_VERSION = "3.1"
+SUPPORTED_VERSIONS = {"1.0", "2.0", "2.1", "2.2", PASSPORT_VERSION}
+#: The shelved ledger preview. Its files round-trip opaquely; nothing mutates them.
+RESERVED_VERSIONS = {"3.0"}
 
 
 class Passport(PortableModel):
@@ -376,6 +504,8 @@ class Passport(PortableModel):
 
     _future_raw: dict[str, Any] | None = PrivateAttr(default=None)
     _future_state: dict[str, Any] | None = PrivateAttr(default=None)
+    _loaded_head: str | None = PrivateAttr(default=None)
+    _signer: Any = PrivateAttr(default=None)
     ingest_report: dict[str, Any] = Field(default_factory=dict, exclude=True)
 
     version: str = Field(PASSPORT_VERSION)
@@ -390,6 +520,13 @@ class Passport(PortableModel):
     episodes: list[Episode] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
     sources: list[SourceRef] = Field(default_factory=list)
+
+    #: Passport 3.1. When `stamps` is nonempty it is canonical and every
+    #: section above is its projection. An empty log is a plain snapshot.
+    holder: dict[str, Any] = Field(default_factory=dict)
+    agents: dict[str, AgentRecord] = Field(default_factory=dict)
+    visas: list[Visa] = Field(default_factory=list)
+    stamps: list[Stamp] = Field(default_factory=list)
 
     meta: dict[str, Any] = Field(default_factory=dict)
 
@@ -443,9 +580,36 @@ class Passport(PortableModel):
         if self.observations:
             d["observations"] = [o.to_compact() for o in self.observations]
         d["sources"] = [s.to_compact() for s in self.sources]
+        if self.holder:
+            d["holder"] = deepcopy(self.holder)
+        if self.agents:
+            d["agents"] = {k: self.agents[k].to_compact() for k in sorted(self.agents)}
+        if self.visas:
+            d["visas"] = [v.to_compact() for v in self.visas]
+        if self.stamps:
+            from .stamps import merkle_root
+            d["stamps"] = [s.to_compact() for s in self.stamps]
+            d["head"] = merkle_root([s.id for s in self.stamps])
         if self.meta:
             d["meta"] = self.meta
         return d
+
+    @property
+    def log_backed(self) -> bool:
+        """
+        True when the stamp log is canonical and sections are its projection.
+
+        A passport becomes log-backed when it has a holder record or any stamp:
+        `Passport.issue()` for a new one, `ensure_log()` for an existing snapshot.
+        """
+        return bool(self.stamps) or bool(self.holder.get("id"))
+
+    @classmethod
+    def issue(cls, holder: str = "holder", *, name: str = "", now: datetime | None = None) -> Passport:
+        """A new, empty, log-backed passport for one holder."""
+        moment = now or utcnow()
+        return cls(updated_at=moment, holder={"id": holder, "name": name or holder,
+                                              "issued_at": _iso(moment)})
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Passport:
@@ -474,8 +638,11 @@ class Passport(PortableModel):
                     payload.setdefault(key, deepcopy(value))
         payload.pop("stats", None)
         payload.pop("ingest_report", None)
+        loaded_head = payload.pop("head", None)
         payload["version"] = PASSPORT_VERSION
-        return cls(**payload)
+        passport = cls(**payload)
+        passport._loaded_head = loaded_head
+        return passport
 
     def to_json(self, *, indent: int | None = 2) -> str:
         return json.dumps(self.to_compact_dict(), indent=indent, ensure_ascii=False, allow_nan=False, separators=(",", ":") if indent is None else None)
@@ -549,6 +716,9 @@ class Passport(PortableModel):
         self.sources.append(src)
 
     def assert_supported(self) -> None:
+        if self.version in RESERVED_VERSIONS:
+            raise ValueError(f"Passport {self.version} is the shelved ledger preview; "
+                             "this release reads 1.0 to 2.2 and 3.1. Round-trip only.")
         if self.version != PASSPORT_VERSION or self._future_raw is not None:
             raise ValueError(f"Unsupported passport version {self.version}; round-trip only")
 
@@ -580,7 +750,12 @@ class Passport(PortableModel):
         from .recall import recall
         return recall(self, **kwargs)
 
-    def forget(self, *, source_ids=None, subject=None, contains=None):
+    def forget(self, *, source_ids=None, subject=None, contains=None, stamp_ids=None):
+        """Erase matching records. A log-backed passport records the erasure as a forget stamp."""
+        if self.log_backed or stamp_ids:
+            from .protocol import forget
+            return forget(self, source_ids=source_ids, subject=subject, contains=contains,
+                          stamp_ids=stamp_ids)
         from .lifecycle import forget
         return forget(self, source_ids=source_ids, subject=subject, contains=contains)
 
@@ -592,6 +767,10 @@ class Passport(PortableModel):
         self.assert_supported()
         if status not in {"open", "completed", "cancelled"}:
             raise ValueError("Invalid loop status")
+        if self.log_backed:
+            from .protocol import set_loop_status
+            set_loop_status(self, item, status, subject=subject, now=now)
+            return
         found = False
         for loop in self.open_loops:
             if loop.item.casefold().strip() == item.casefold().strip() and loop.subject.casefold() == subject.casefold():
@@ -601,3 +780,65 @@ class Passport(PortableModel):
         if not found:
             raise KeyError(item)
         self.touch(now)
+
+    # -- Passport 3.1: the stamp protocol -------------------------------------
+
+    def ensure_log(self) -> Passport:
+        """Make the stamp log canonical, turning a snapshot into genesis stamps once."""
+        from .protocol import ensure_log
+        ensure_log(self)
+        return self
+
+    def propose(self, stamps, *, visa: Visa | None = None, author: str | None = None,
+                origin: str | None = None, now: datetime | None = None, node: str = "local"):
+        """Write stamps. Returns accepted, quarantined and rejected items with reasons."""
+        from .protocol import propose
+        return propose(self, stamps, visa=visa, author=author, origin=origin, now=now, node=node)
+
+    def pending(self) -> list[dict[str, Any]]:
+        """Quarantined stamps waiting for the holder."""
+        from .protocol import pending
+        return pending(self)
+
+    def confirm(self, stamp_ids: list[str], *, now: datetime | None = None):
+        """Holder confirms stamps: quarantined ones enter beliefs, accepted ones gain trust."""
+        from .protocol import confirm
+        return confirm(self, list(stamp_ids), now=now)
+
+    def dismiss(self, stamp_ids: list[str], *, now: datetime | None = None):
+        """Holder marks stamps false from the start."""
+        from .protocol import dismiss
+        return dismiss(self, list(stamp_ids), now=now)
+
+    def history(self, *, subject: str = "", key: str | None = None, item: str | None = None,
+                section: str | None = None) -> list[dict[str, Any]]:
+        """Every write to one slot, oldest first, with what became of it."""
+        from .protocol import history
+        return history(self, subject=subject, key=key, item=item, section=section)
+
+    def view(self, visa: Visa, **kwargs):
+        """The visa's minimum-necessary context (a RecallResult)."""
+        from .visa import view
+        return view(self, visa, **kwargs)
+
+    def issue_visa(self, agent: str, **kwargs) -> Visa:
+        """Mint a visa for an agent. Its token is on the returned object, once."""
+        from .visa import issue_visa
+        return issue_visa(self, agent=agent, **kwargs)
+
+    def revoke(self, visa_id: str | None = None, *, everything: bool = False,
+               now: datetime | None = None) -> int:
+        """Revoke one visa, or every visa at once."""
+        from .visa import revoke
+        return revoke(self, visa_id, everything=everything, now=now)
+
+    def verify(self, *, signer=None) -> dict[str, Any]:
+        """Offline integrity of the log: addresses, targets, head, signatures, projection."""
+        from .protocol import verify
+        return verify(self, signer=signer)
+
+    @classmethod
+    def merge(cls, left: Passport, right: Passport) -> Passport:
+        """Union two replicas of one passport. Every order of merging gives the same beliefs."""
+        from .protocol import merge
+        return merge(left, right)

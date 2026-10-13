@@ -1,23 +1,28 @@
 """
-SozoGraph: portable JSON memory for LLM agents.
+SozoGraph: the portable memory layer for agents.
 
-    from sozograph import SozoGraph
+    from sozograph import Passport
 
-    sg = SozoGraph()
-    passport = sg.ingest(transcript)
-    print(passport.context(query="Where does Melanie live?"))
-    passport.save("user.json")
+    p = Passport.issue("rairo")                       # one holder, one passport
+    muse = p.issue_visa("muse", domains=["shopping"], write=True)
+    p.propose([{"attribute": "shoe_size", "value": "44", "origin": "user_direct"}], visa=muse)
+    print(p.view(muse, query="running shoes").context)
+    p.save("rairo.json")
 
-No vector database, no embedding model, no local weights. The memory is a small
-JSON file you can read, diff, email, and load anywhere.
+The holder owns the passport. Each agent holds a visa. Every write arrives as
+a stamp. The core needs only pydantic: no vector database, no embedding model,
+no service. A passport is a small JSON file you can read, diff, merge and
+carry between agents.
 """
 from __future__ import annotations
 
 from .compact import compact
 from .core import SozoGraph
+from .protocol import ProposeResult
 from .providers import LLMProvider, ProviderError, Usage, get_provider
 from .recall import RecallRecord, RecallResult
 from .schema import (
+    AgentRecord,
     Contradiction,
     Entity,
     Episode,
@@ -28,11 +33,19 @@ from .schema import (
     Passport,
     Preference,
     SourceRef,
+    Stamp,
+    Visa,
 )
+from .stamps import HmacSigner
 
 __all__ = [
     "SozoGraph",
     "Passport",
+    "Visa",
+    "Stamp",
+    "AgentRecord",
+    "ProposeResult",
+    "HmacSigner",
     "Episode",
     "Fact",
     "Preference",
@@ -51,4 +64,4 @@ __all__ = [
     "Usage",
 ]
 
-__version__ = "0.3.2"
+__version__ = "0.4.0"

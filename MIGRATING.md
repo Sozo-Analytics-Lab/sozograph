@@ -1,3 +1,23 @@
+# Migrating to 0.4.0
+
+Package 0.4.0 writes Passport 3.1. Every 0.3.2 call keeps working: `ingest`, `context`, `recall`, `save`, `load`, `forget` and `audit` behave as before on a passport with an empty stamp log.
+
+**Files.** Readers load 1.0 to 2.2 and write them back as 3.1, still as plain snapshots. Stamps begin when you ask for them. A 3.1 file with an empty log and an empty holder keeps 2.2 semantics. Older readers treat 3.1 files as a future version: they round-trip them unchanged and refuse to mutate them. Version 3.0, the shelved ledger preview, round-trips unchanged here too.
+
+**Opting into the stamp log.** `Passport.issue()` creates a new log-backed passport. `passport.ensure_log()` or `sozograph upgrade FILE` turns an existing snapshot into genesis stamps, and projecting them reproduces the snapshot. After that the stamps are canonical: write through `propose`, `confirm`, `dismiss`, `forget` and `set_loop_status`. Direct edits to sections of a log-backed passport are overwritten by the next projection.
+
+**Ingest on a log-backed passport** writes the extraction as stamps by `sozograph:extractor:<provider>` with origin `agent_inferred`, so the admission gate applies: protected attributes (contact details, addresses, payment and banking, identity numbers, standing instructions) wait in `pending()`. Pass `origin="user_direct"` for the holder's own transcripts. The projection folds stamps through the 2.2 resolver, and a single-writer log reproduces 2.2 sections exactly.
+
+**Governance fields** (`stamp_ids`, `author`, `origin`, `domains`, `kind`, `valid_from`, `valid_until`, `sensitivity`) appear on records of log-backed passports. A fact with `valid_from` takes that date as its `ts`.
+
+**Timestamps.** `to_compact()` now always writes `ts` fields. Before, a timestamp equal to the current time at serialization was dropped and reloaded as a different time.
+
+**New optional extras.** `[mcp]` for the server, `[sign]` for Ed25519 signatures, `[firestore]` for the Firestore store, `[server]` for all three. The core still needs only pydantic.
+
+Earlier migration notes follow.
+
+---
+
 # Migrating to 0.3.2
 
 Package 0.3.2 writes Passport 2.2. Existing ingest/context/save entry points remain.

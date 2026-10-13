@@ -212,6 +212,11 @@ def _merge_provenance(existing, incoming):
                                       + [s for s in [getattr(existing, "source", None), getattr(incoming, "source", None)] if s]))
     refs = {sha256_json(e.to_compact()): e for e in existing.evidence + incoming.evidence}
     existing.evidence = [refs[k] for k in sorted(refs)]
+    # Passport 3.1: a merged record keeps every stamp and domain behind it.
+    if existing.stamp_ids or incoming.stamp_ids:
+        existing.stamp_ids = sorted(set(existing.stamp_ids) | set(incoming.stamp_ids))
+    if existing.domains or incoming.domains:
+        existing.domains = sorted(set(existing.domains) | set(incoming.domains))
 
 
 def _upsert_open_loop(existing: list[OpenLoop], incoming: OpenLoop) -> bool:

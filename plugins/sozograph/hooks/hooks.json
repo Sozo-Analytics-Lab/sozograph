@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sozograph hook session-start",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}

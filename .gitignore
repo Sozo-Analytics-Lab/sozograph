@@ -52,3 +52,12 @@ htmlcov/
 # OS
 # -----------------------------
 Thumbs.db
+
+# Internal strategy and build material (kept local)
+docs/.report_build/
+docs/PLAN_*.md
+docs/SozoGraph_Memory_Layer_*.docx
+docs/releases/
+*.lock
+*.office.json
+*.audit.jsonl

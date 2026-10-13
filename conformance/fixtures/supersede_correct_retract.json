@@ -1,0 +1,232 @@
+{
+  "name": "supersede_correct_retract",
+  "format": "3.1",
+  "input": {
+    "stamps": [
+      {
+        "id": "st_24bd9640a29a9fbc98ad5115e34c7c8e",
+        "section": "facts",
+        "claim": {
+          "value": "Gweru",
+          "ts": "2027-01-02T00:00:00+00:00",
+          "key": "home_city",
+          "source": "holder",
+          "kind": "residence"
+        },
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1798848000000-00000-local"
+      },
+      {
+        "id": "st_723dcd47c471f7ea80d9c0748ce648e7",
+        "op": "supersede",
+        "section": "facts",
+        "claim": {
+          "value": "Mutare",
+          "valid_from": "2027-03-14",
+          "key": "home_city",
+          "source": "holder",
+          "ts": "2027-01-03T00:00:00+00:00",
+          "kind": "residence"
+        },
+        "targets": [
+          "st_24bd9640a29a9fbc98ad5115e34c7c8e"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1798934400000-00000-local",
+        "seen": "1798848000000-00000-local"
+      },
+      {
+        "id": "st_0716069ff641edff43fc08537cafc996",
+        "section": "facts",
+        "claim": {
+          "value": "14 March",
+          "key": "birthday",
+          "source": "holder",
+          "ts": "2027-01-04T00:00:00+00:00",
+          "kind": "identity"
+        },
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1799020800000-00000-local",
+        "seen": "1798934400000-00000-local"
+      },
+      {
+        "id": "st_2a4dcaa7474cbf6729c3dc59601b2d31",
+        "op": "correct",
+        "section": "facts",
+        "claim": {
+          "value": "4 March",
+          "key": "birthday",
+          "source": "holder",
+          "ts": "2027-01-05T00:00:00+00:00",
+          "kind": "identity"
+        },
+        "targets": [
+          "st_0716069ff641edff43fc08537cafc996"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1799107200000-00000-local",
+        "seen": "1799020800000-00000-local"
+      },
+      {
+        "id": "st_9bc328ff88ba020ffa0458f96878d895",
+        "section": "facts",
+        "claim": {
+          "value": "Toyota",
+          "key": "car",
+          "source": "holder",
+          "ts": "2027-01-06T00:00:00+00:00",
+          "kind": "fact"
+        },
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1799193600000-00000-local",
+        "seen": "1799107200000-00000-local"
+      },
+      {
+        "id": "st_87069dcad5ad6661ea257147c311c9aa",
+        "op": "retract",
+        "section": "facts",
+        "targets": [
+          "st_9bc328ff88ba020ffa0458f96878d895"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1799280000000-00000-local",
+        "seen": "1799193600000-00000-local"
+      },
+      {
+        "id": "st_0ff94adac01b9ba263b97f37275bd41d",
+        "section": "facts",
+        "claim": {
+          "value": "Virgin Active",
+          "key": "gym",
+          "source": "holder",
+          "ts": "2027-01-08T00:00:00+00:00",
+          "kind": "fact"
+        },
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1799366400000-00000-local",
+        "seen": "1799280000000-00000-local"
+      },
+      {
+        "id": "st_db8400378c64ce2eb045b13c92856d5e",
+        "op": "expire",
+        "section": "facts",
+        "claim": {
+          "valid_until": "2027-06-30"
+        },
+        "targets": [
+          "st_0ff94adac01b9ba263b97f37275bd41d"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1799452800000-00000-local",
+        "seen": "1799366400000-00000-local"
+      }
+    ],
+    "agents": {
+      "claude-code": {
+        "id": "claude-code",
+        "name": "claude-code",
+        "model": "claude-opus-5-5",
+        "home_domains": [
+          "software"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "muse": {
+        "id": "muse",
+        "name": "muse",
+        "model": "muse-spark",
+        "home_domains": [
+          "shopping"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "notes-a": {
+        "id": "notes-a",
+        "name": "notes-a",
+        "home_domains": [
+          "research"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "notes-b": {
+        "id": "notes-b",
+        "name": "notes-b",
+        "home_domains": [
+          "documents"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      }
+    }
+  },
+  "expected": {
+    "head": "e33e60e2fc8174b01fae36e6c6df9563da07c26b7444010309a26d54327da8a1",
+    "facts": [
+      {
+        "stamp_ids": [
+          "st_2a4dcaa7474cbf6729c3dc59601b2d31"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "kind": "identity",
+        "key": "birthday",
+        "value": "4 March",
+        "ts": "2027-01-05T00:00:00Z",
+        "source": "holder"
+      },
+      {
+        "stamp_ids": [
+          "st_0ff94adac01b9ba263b97f37275bd41d"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "kind": "fact",
+        "valid_until": "2027-06-30",
+        "key": "gym",
+        "value": "Virgin Active",
+        "ts": "2027-01-08T00:00:00Z",
+        "source": "holder"
+      },
+      {
+        "stamp_ids": [
+          "st_723dcd47c471f7ea80d9c0748ce648e7"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "kind": "residence",
+        "valid_from": "2027-03-14",
+        "key": "home_city",
+        "value": "Mutare",
+        "ts": "2027-03-14T00:00:00Z",
+        "source": "holder"
+      }
+    ],
+    "prefs": [],
+    "entities": [],
+    "open_loops": [],
+    "episodes": [],
+    "observations": [],
+    "contradictions": [
+      {
+        "stamp_ids": [
+          "st_24bd9640a29a9fbc98ad5115e34c7c8e",
+          "st_723dcd47c471f7ea80d9c0748ce648e7"
+        ],
+        "key": "home_city",
+        "old": "Gweru",
+        "new": "Mutare",
+        "ts_old": "2027-01-02T00:00:00Z",
+        "ts_new": "2027-03-14T00:00:00Z",
+        "source_old": "holder",
+        "source_new": "holder"
+      }
+    ]
+  }
+}
