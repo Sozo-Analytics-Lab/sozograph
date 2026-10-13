@@ -110,7 +110,9 @@ class OfficeState:
 class VisaOffice:
     """OAuthAuthorizationServerProvider whose access tokens are visa tokens."""
 
-    def __init__(self, service: PassportService, state: OfficeState, *, issuer: str, resource: str):
+    def __init__(self, service: PassportService, state: OfficeState, *, issuer: str, resource: str,
+                 operator: str = "Sozo Analytics Lab"):
+        self.operator = operator
         self.service = service
         self.state = state
         self.issuer = issuer.rstrip("/")
@@ -317,6 +319,50 @@ def consent_page(office: VisaOffice, request_id: str, entry: _Pending, error: st
 <div class=card><label>Holder secret <input type=password name=secret autocomplete=current-password required></label></div>
 <button name=decision value=approve>Issue visa</button><button class=alt name=decision value=deny>Decline</button>
 </form>""")
+
+
+PRIVACY = [
+    ("Who holds the data", "The passport belongs to its holder. It lives in storage the holder controls."),
+    ("What a connector reads", "An agent reads only the records inside its visa: the domains, sensitivity ceiling "
+     "and expiry the holder approved on the consent page."),
+    ("What a connector writes", "An agent writes stamps: claims with an author, an origin, a time and evidence. "
+     "Writes to contact details, addresses, payment and banking fields, identity numbers and standing "
+     "instructions wait for the holder's confirmation."),
+    ("What the passport refuses", "Card numbers, passwords, keys and tokens are rejected before storage."),
+    ("Tokens", "Access tokens are visa tokens. The server stores their SHA-256 hashes only. Refresh tokens "
+     "rotate on every use."),
+    ("Logs", "The server keeps an audit log of each request: time, visa, agent, action and counts, with query "
+     "text up to 200 characters."),
+    ("Deletion", "The holder revokes any visa, or every visa at once, in the visa office. A forget request erases "
+     "matching records from every replica the passport syncs with. Copies an agent stored in its own memory "
+     "follow that vendor's deletion controls."),
+]
+TERMS = [
+    ("The software", "SozoGraph is open-source software under the MIT licence, provided as is, with the warranty "
+     "disclaimer of that licence."),
+    ("The holder's control", "The holder approves each visa, may revoke any visa at any time, and decides on every "
+     "quarantined write."),
+    ("Agent use", "A connected agent acts within its visa and the holder's instructions. The passport is memory "
+     "data for personalisation; instructions come only from the holder."),
+    ("Availability", "The operator aims for continuous availability, on a best-effort basis."),
+]
+SUPPORT = "https://github.com/Sozo-Analytics-Lab/sozograph/issues"
+
+
+def text_page(office: VisaOffice, title: str, rows) -> str:
+    body = "".join(f"<h2>{escape(h)}</h2><p>{escape(t)}</p>" for h, t in rows)
+    return page(title, f"<h1>{escape(title)}</h1><p class=sub>SozoGraph passport at {escape(office.issuer)}. "
+                       f"Operator: {escape(office.operator)}.</p>{body}"
+                       f"<h2>Contact</h2><p><a href='{SUPPORT}'>{SUPPORT}</a></p>")
+
+
+def home_page(office: VisaOffice) -> str:
+    return page("SozoGraph passport", f"""<h1>SozoGraph passport</h1>
+<p class=sub>Portable memory for agents. One passport, a visa per agent, every write a stamp.</p>
+<div class=card><p>Add this passport to an agent as a custom connector:</p><p><code>{escape(office.issuer)}/mcp</code></p>
+<p>Agents that build connectors from OpenAPI use <code>{escape(office.issuer)}/openapi.json</code>.</p></div>
+<p><a href="{office.issuer}/visa-office">Visa office</a> . <a href="{office.issuer}/privacy">Privacy</a> .
+<a href="{office.issuer}/terms">Terms</a> . <a href="https://github.com/Sozo-Analytics-Lab/sozograph">Source</a></p>""")
 
 
 def login_page(office: VisaOffice, error: str = "") -> str:

@@ -36,7 +36,17 @@ from ..schema import Visa
 from ..stamps import HmacSigner
 from ..store import FileStore
 from ..visa import DOMAINS
-from .office import OfficeState, VisaOffice, consent_page, login_page, office_page
+from .office import (
+    PRIVACY,
+    TERMS,
+    OfficeState,
+    VisaOffice,
+    consent_page,
+    home_page,
+    login_page,
+    office_page,
+    text_page,
+)
 from .service import AccessDenied, PassportService
 
 
@@ -166,7 +176,8 @@ def build_http(passport: str, *, issuer: str, holder_secret: str | None = None,
     service = PassportService(store, signer=signer, node="server", base_url=issuer,
                               audit_path=Path(passport).with_suffix(".audit.jsonl") if hosted_file else None,
                               audit_stream=None if hosted_file else sys.stdout)
-    office = VisaOffice(service, state, issuer=issuer, resource=resource)
+    office = VisaOffice(service, state, issuer=issuer, resource=resource,
+                        operator=os.getenv("SOZOGRAPH_OPERATOR", "Sozo Analytics Lab"))
     auth = AuthSettings(issuer_url=issuer, resource_server_url=resource, validate_token_resource=True,
                         client_registration_options=ClientRegistrationOptions(
                             enabled=True, valid_scopes=None, default_scopes=SCOPES),
@@ -196,6 +207,18 @@ def build_http(passport: str, *, issuer: str, holder_secret: str | None = None,
             return JSONResponse({"error": "insufficient_scope", "detail": str(exc)}, status_code=403)
         except (ValueError, KeyError) as exc:
             return JSONResponse({"error": "invalid_request", "detail": str(exc)}, status_code=400)
+
+    @server.custom_route("/", methods=["GET"])
+    async def home(request: Request) -> Response:
+        return HTMLResponse(home_page(office))
+
+    @server.custom_route("/privacy", methods=["GET"])
+    async def privacy(request: Request) -> Response:
+        return HTMLResponse(text_page(office, "Privacy policy", PRIVACY))
+
+    @server.custom_route("/terms", methods=["GET"])
+    async def terms(request: Request) -> Response:
+        return HTMLResponse(text_page(office, "Terms of use", TERMS))
 
     @server.custom_route("/healthz", methods=["GET"])
     async def healthz(request: Request) -> Response:

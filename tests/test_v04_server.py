@@ -232,3 +232,9 @@ def test_openapi_describes_the_rest_mirror():
     spec = openapi_spec("https://passport.example.com")
     assert spec["servers"][0]["url"] == "https://passport.example.com"
     assert {"/v1/recall", "/v1/stamps", "/v1/history", "/v1/handoff", "/v1/forget"} <= set(spec["paths"])
+
+
+def test_public_pages_for_connector_listings(hosted):
+    _, client, _ = hosted
+    assert "/mcp" in client.get("/").text
+    assert "SHA-256" in client.get("/privacy").text and "MIT" in client.get("/terms").text

@@ -123,13 +123,14 @@ class FirestoreStore:
     """
 
     def __init__(self, project: str | None, collection: str, document: str, *, client=None,
-                 holder: str = "holder", attempts: int = 5):
+                 holder: str = "holder", attempts: int = 5, database: str | None = None):
         if client is None:
             try:
                 from google.cloud import firestore
             except ImportError as exc:  # pragma: no cover - exercised without the extra
                 raise ImportError('The Firestore store needs: pip install "sozograph[firestore]"') from exc
-            client = firestore.Client(project=project)
+            client = firestore.Client(project=project, database=database) if database else \
+                firestore.Client(project=project)
         self.client = client
         self.ref = client.collection(collection).document(document)
         self.holder = holder
@@ -194,13 +195,16 @@ class JsonDocument:
 
 
 def open_store(spec: str, *, client=None):
-    """`path/to/file.json` or `firestore://project/collection/document`."""
+    """`path/to/file.json` or `firestore://project/collection/document[?database=name]`."""
     if spec.startswith("firestore://"):
-        parts = spec[len("firestore://"):].strip("/").split("/")
+        body, _, query = spec[len("firestore://"):].partition("?")
+        parts = body.strip("/").split("/")
         if len(parts) != 3:
-            raise ValueError("firestore://project/collection/document")
+            raise ValueError("firestore://project/collection/document[?database=name]")
+        options = dict(item.split("=", 1) for item in query.split("&") if "=" in item)
         project, collection, document = parts
-        store = FirestoreStore(project or None, collection, document, client=client)
+        store = FirestoreStore(project or None, collection, document, client=client,
+                               database=options.get("database") or os.getenv("SOZOGRAPH_FIRESTORE_DATABASE"))
         office = JsonDocument(ref=store.client.collection(collection).document(document + "__office"))
         return store, office
     path = Path(spec)

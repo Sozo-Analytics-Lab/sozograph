@@ -125,3 +125,10 @@ def test_ed25519_author_signatures_verify_offline():
     assert p.verify(signer=signer.verifier())["valid"]
     other = Ed25519Signer(key_id="claude-code")
     assert not p.verify(signer=other.verifier())["valid"]
+
+
+def test_firestore_spec_takes_a_database():
+    from sozograph.store import open_store
+    client = Client()
+    store, _ = open_store("firestore://proj/passports/rairo?database=sozograph", client=client)
+    assert isinstance(store, FirestoreStore)

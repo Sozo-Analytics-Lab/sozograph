@@ -1,0 +1,25 @@
+# Only what the image needs goes to Cloud Build.
+.git
+.gitignore
+.claude/
+.claude-plugin/
+.venv/
+.pytest_cache/
+.ruff_cache/
+__pycache__/
+*.pyc
+build/
+dist/
+data/
+docs/
+tests/
+bench/
+conformance/
+plugins/
+skills/
+connectors/
+examples/
+*.docx
+*.json.lock
+*.office.json
+*.audit.jsonl

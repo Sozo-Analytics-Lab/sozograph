@@ -144,6 +144,10 @@ def run_scenario(sc, agents: dict[str, Callable[[str, str], str]], *, gate: bool
             stats["accepted"] += len(result.accepted)
             stats["quarantined"] += len(result.quarantined)
             stats["rejected"] += len(result.rejected)
+            for row in result.rejected:
+                stats["reject:" + row["reason"][:60]] += 1
+            for row in result.quarantined:
+                stats["quarantine:" + row["reason"][:60]] += 1
         snapshots.append(to_pc(p))
     scored = pc.score_scenario(sc, snapshots)
     stats["third_party_protected_beliefs"] = _protected_from_third_party(p)
