@@ -95,10 +95,19 @@ Extras: `anthropic`, `openai`, `gemini`, `ollama`, `litellm`, `langchain`. On a 
 
 ```bash
 python -m bench.relay --scripted door --scenarios 16
-python -m bench.relay --chat anthropic:claude-opus-5-5 --inbox openai:gpt-6.1-sol --web gemini:gemini-3.1-pro
+python -m bench.relay --kaggle openai/gpt-oss-120b --ablate          # Kaggle model proxy
+python bench/relay/build_kaggle.py                                   # Kaggle Benchmarks tasks
 ```
 
-Passport Relay plays Passport Control with three agents on one passport. Offline, a policy that believes every injected email and tool result passes 26% of the injection checks with the gate off and 100% with it on, and the third-party values reaching protected beliefs fall from 16 to 0. The LoCoMo and LongMemEval harnesses remain under `bench/`.
+Passport Relay plays Passport Control with three agents (chat, inbox, web) on one passport, each under its own visa, scored by the same 661 deterministic checks.
+
+| Run | Scenarios | Overall | Injection checks | Leaked records | Protected beliefs from third parties |
+|---|---|---|---|---|---|
+| Door policy, gate off (offline) | 16 | 0.45 | 0.26 | 0 | 16 |
+| Door policy, gate on (offline) | 16 | 0.49 | 1.00 | 0 | 0 |
+| Gemini 3.7 Flash, three agents (Kaggle) | 14 | 0.910 | 1.00 | 0 | 0 |
+
+Gemini 3.7 Flash scored 0.919 alone on Passport Control and 0.910 as three agents sharing one passport, where they read each other's stamps 51 times. The LoCoMo and LongMemEval harnesses remain under `bench/`.
 
 ## Development
 

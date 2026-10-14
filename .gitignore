@@ -61,3 +61,4 @@ docs/releases/
 *.lock
 *.office.json
 *.audit.jsonl
+docs/SozoGraph_0.4_*.docx
