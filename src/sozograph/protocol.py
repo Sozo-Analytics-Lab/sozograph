@@ -123,6 +123,9 @@ def _normalize(passport: Passport, item: Any, *, writer: str, visa: Visa | None,
         {k: v for k, v in item.items() if k not in _ITEM_KEYS}
     claim.pop("stamp_ids", None)
     claim.pop("section", None)
+    # Agents write null for "unknown" (valid_until, kind, domains). A blank field
+    # drops out; the rest of the stamp stands.
+    claim = {k: v for k, v in claim.items() if v is not None or k == "value"}
     if "attribute" in claim and "key" not in claim:
         claim["key"] = claim.pop("attribute")
     if str(claim.get("subject", "")).strip().casefold() in _HOLDER_WORDS:

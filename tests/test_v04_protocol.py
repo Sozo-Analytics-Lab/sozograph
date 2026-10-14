@@ -497,3 +497,11 @@ def test_a_timestamp_equal_to_now_survives_serialization(monkeypatch):
     monkeypatch.setattr(schema, "datetime", Frozen)
     fact = Fact(key="k", value="v", ts=T, source="s")
     assert fact.to_compact()["ts"].startswith("2026-10-01")
+
+
+def test_null_fields_drop_out_and_the_stamp_stands():
+    p, muse, _ = fresh()
+    r = p.propose([{"attribute": "shoe_size", "value": "44", "valid_from": None, "valid_until": None,
+                    "kind": None, "domains": None}], visa=muse, now=day(1))
+    assert r.accepted and not r.rejected
+    assert next(f for f in p.facts if f.key == "shoe_size").valid_until == ""

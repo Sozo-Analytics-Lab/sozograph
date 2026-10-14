@@ -148,6 +148,7 @@ def test_oauth_consent_issues_a_scoped_visa_and_rest_honours_it(hosted):
     recalled = client.get("/v1/recall", headers=bearer, params={"query": "voice"}).json()
     assert "declarative" in recalled["context"]
     assert client.get("/v1/recall").status_code == 401
+    assert client.get("/health").json()["ok"]
     p = Passport.load(path)
     assert p.visas[0].agent == "grok" and p.verify()["valid"]
     assert all(s.sig.startswith("hmac-sha256:server:") for s in p.stamps)

@@ -220,9 +220,12 @@ def build_http(passport: str, *, issuer: str, holder_secret: str | None = None,
     async def terms(request: Request) -> Response:
         return HTMLResponse(text_page(office, "Terms of use", TERMS))
 
-    @server.custom_route("/healthz", methods=["GET"])
-    async def healthz(request: Request) -> Response:
+    async def health(request: Request) -> Response:
         return JSONResponse({"ok": True, "version": __version__})
+
+    # Cloud Run reserves paths ending in "z", so hosted checks use /health.
+    server.custom_route("/health", methods=["GET"])(health)
+    server.custom_route("/healthz", methods=["GET"])(health)
 
     @server.custom_route("/v1/recall", methods=["GET"])
     async def rest_recall(request: Request) -> Response:
