@@ -64,16 +64,32 @@ def _safe(value):
     return "".join(ch if ord(ch) >= 32 and ord(ch) != 127 else f"\\u{ord(ch):04x}" for ch in text)
 
 
+def _marks(item):
+    """Passport 3.1 freshness: upcoming, stale and bounded claims say so."""
+    state = item.get("freshness")
+    if state == "upcoming":
+        return f"[from {_safe(item.get('valid_from', ''))[:10]}] "
+    if state == "stale":
+        return "[verify] "
+    if state == "expired":
+        return "[ended] "
+    return ""
+
+
+def _until(item):
+    return f" (until {_safe(item['valid_until'])[:10]})" if item.get("valid_until") else ""
+
+
 def _row(section, item):
     scope = f"{_safe(item.get('subject'))}: " if item.get("subject") else ""
     if section in {"facts", "prefs"}:
         label = "[disputed] " if item.get("status") == "disputed" else ""
-        return f"- {label}{scope}{_safe(item['key'])}: {_safe(item['value'])}"
+        return f"- {label}{_marks(item)}{scope}{_safe(item['key'])}: {_safe(item['value'])}{_until(item)}"
     if section == "observations":
         when = item.get("when", "")
         if item.get("when_end"):
             when += " to " + item["when_end"]
-        return "- " + (f"[{when}] " if when else "") + _safe(item["text"])
+        return "- " + _marks(item) + (f"[{when}] " if when else "") + _safe(item["text"])
     if section == "entities":
         return f"- {_safe(item['name'])}" + (f" ({item['type']})" if item.get("type", "other") != "other" else "")
     if section == "contradictions":
@@ -89,7 +105,7 @@ def _row(section, item):
 def recall(passport, *, query=None, budget_chars=6000, header="SOZOGRAPH PASSPORT", caps=None,
            graph=False, include_sources=False, source_neighbors=1, subject=None,
            date_from=None, date_to=None, query_time=None, token_counter=None, budget_tokens=None,
-           include_citations=False):
+           include_citations=False, penalty=None):
     from .render import Caps, _bounds, _episode_prior, _kv_prior, _time_prior, _wants_chronology
 
     passport.assert_supported()
@@ -158,6 +174,8 @@ def recall(passport, *, query=None, budget_chars=6000, header="SOZOGRAPH PASSPOR
             neighbor = float(bool(named & graph_names))
             prior = priors[section](item) if section in priors else 0.0
             score = 0.7 * lexical + 0.2 * direct + 0.1 * prior + 0.1 * neighbor if query else prior
+            if penalty is not None:
+                score -= penalty(section, data)
             sids = sorted(set(data.get("source_ids", []) + ([data["source"]] if data.get("source") else [])
                               + [data[k] for k in ("source_old", "source_new") if data.get(k)]))
             refs = {str(e["turn_id"]) for e in data.get("evidence", [])}
@@ -173,12 +191,15 @@ def recall(passport, *, query=None, budget_chars=6000, header="SOZOGRAPH PASSPOR
                                source_ids=sids, evidence_ids=sorted(refs))
             if include_citations and sids:
                 row.text += " [source " + ",".join(sids) + "]"
-            event_start = data.get("when") or data.get("ts", "")[:10]
+            event_start = (data.get("when", "") if section == "observations"
+                           else data.get("when") or data.get("ts", "")[:10])
             event_end = data.get("when_end") or event_start
             if wanted and not named & wanted:
                 row.reason = "subject filter"
             elif section == "open_loops" and data.get("status", "open") != "open":
                 row.reason = "closed loop"
+            elif (date_from or date_to) and section == "observations" and not event_start:
+                row.reason = "unknown event time"
             elif (date_from or date_to) and (not event_start or (date_from and event_end < date_from)
                                             or (date_to and event_start > date_to)):
                 row.reason = "time filter"

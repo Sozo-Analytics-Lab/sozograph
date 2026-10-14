@@ -1,5 +1,69 @@
 {
   "$defs": {
+    "AgentRecord": {
+      "additionalProperties": true,
+      "description": "An agent that has held a visa: who it is and what it is good at.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "vendor": {
+          "default": "",
+          "title": "Vendor",
+          "type": "string"
+        },
+        "model": {
+          "default": "",
+          "title": "Model",
+          "type": "string"
+        },
+        "home_domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Home Domains",
+          "type": "array"
+        },
+        "first_seen": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "First Seen"
+        },
+        "last_seen": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Last Seen"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "title": "AgentRecord",
+      "type": "object"
+    },
     "Contradiction": {
       "additionalProperties": true,
       "properties": {
@@ -16,6 +80,59 @@
           },
           "title": "Source Ids",
           "type": "array"
+        },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
         },
         "subject": {
           "default": "",
@@ -139,6 +256,59 @@
           "title": "Source Ids",
           "type": "array"
         },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
+        },
         "name": {
           "minLength": 1,
           "title": "Name",
@@ -191,6 +361,59 @@
           },
           "title": "Source Ids",
           "type": "array"
+        },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
         },
         "id": {
           "title": "Id",
@@ -327,6 +550,59 @@
           "title": "Source Ids",
           "type": "array"
         },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
+        },
         "subject": {
           "default": "",
           "title": "Subject",
@@ -418,6 +694,59 @@
           "title": "Source Ids",
           "type": "array"
         },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
+        },
         "text": {
           "minLength": 1,
           "title": "Text",
@@ -487,6 +816,59 @@
           "title": "Source Ids",
           "type": "array"
         },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
+        },
         "subject": {
           "default": "",
           "title": "Subject",
@@ -541,6 +923,59 @@
           },
           "title": "Source Ids",
           "type": "array"
+        },
+        "stamp_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Stamp Ids",
+          "type": "array"
+        },
+        "author": {
+          "default": "",
+          "title": "Author",
+          "type": "string"
+        },
+        "origin": {
+          "default": "",
+          "title": "Origin",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
+        "valid_from": {
+          "default": "",
+          "title": "Valid From",
+          "type": "string"
+        },
+        "valid_until": {
+          "default": "",
+          "title": "Valid Until",
+          "type": "string"
+        },
+        "sensitivity": {
+          "anyOf": [
+            {
+              "maximum": 3,
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sensitivity"
         },
         "subject": {
           "default": "",
@@ -723,6 +1158,222 @@
       ],
       "title": "SourceRef",
       "type": "object"
+    },
+    "Stamp": {
+      "additionalProperties": true,
+      "description": "One write to a log-backed passport.\n\nThe stamp log is the source of truth of a Passport 3.1 file. Every section\nis a deterministic projection of it, so two replicas holding the same\nstamps hold the same beliefs. `id` is a content address; `admission`,\n`sig` and `redacted` sit outside it, because they are the receiving\nreplica's verdict, its attestation and the holder's erasure, joined on merge.",
+      "properties": {
+        "id": {
+          "default": "",
+          "title": "Id",
+          "type": "string"
+        },
+        "op": {
+          "default": "assert",
+          "enum": [
+            "assert",
+            "supersede",
+            "correct",
+            "retract",
+            "confirm",
+            "forget",
+            "expire"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "section": {
+          "default": "",
+          "title": "Section",
+          "type": "string"
+        },
+        "claim": {
+          "additionalProperties": true,
+          "title": "Claim",
+          "type": "object"
+        },
+        "targets": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Targets",
+          "type": "array"
+        },
+        "author": {
+          "minLength": 1,
+          "title": "Author",
+          "type": "string"
+        },
+        "visa": {
+          "default": "",
+          "title": "Visa",
+          "type": "string"
+        },
+        "origin": {
+          "default": "agent_inferred",
+          "enum": [
+            "third_party",
+            "tool_result",
+            "imported",
+            "agent_inferred",
+            "user_confirmed",
+            "user_direct"
+          ],
+          "title": "Origin",
+          "type": "string"
+        },
+        "hlc": {
+          "default": "",
+          "title": "Hlc",
+          "type": "string"
+        },
+        "seen": {
+          "default": "",
+          "title": "Seen",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "erase_sources": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Erase Sources",
+          "type": "array"
+        },
+        "admission": {
+          "default": "accepted",
+          "enum": [
+            "accepted",
+            "quarantined"
+          ],
+          "title": "Admission",
+          "type": "string"
+        },
+        "admission_reason": {
+          "default": "",
+          "title": "Admission Reason",
+          "type": "string"
+        },
+        "sig": {
+          "default": "",
+          "title": "Sig",
+          "type": "string"
+        },
+        "redacted": {
+          "default": false,
+          "title": "Redacted",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "author"
+      ],
+      "title": "Stamp",
+      "type": "object"
+    },
+    "Visa": {
+      "additionalProperties": true,
+      "description": "One agent's permission to read and write part of a passport.\n\nThe secret token never touches the file; only its SHA-256 does. The token\nis available once, on the object `issue()` returns.",
+      "properties": {
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "agent": {
+          "minLength": 1,
+          "title": "Agent",
+          "type": "string"
+        },
+        "domains": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Domains",
+          "type": "array"
+        },
+        "include_general": {
+          "default": true,
+          "title": "Include General",
+          "type": "boolean"
+        },
+        "write": {
+          "default": false,
+          "title": "Write",
+          "type": "boolean"
+        },
+        "forget": {
+          "default": false,
+          "title": "Forget",
+          "type": "boolean"
+        },
+        "sensitivity_ceiling": {
+          "default": 1,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Sensitivity Ceiling",
+          "type": "integer"
+        },
+        "purpose": {
+          "default": "",
+          "title": "Purpose",
+          "type": "string"
+        },
+        "issued_at": {
+          "format": "date-time",
+          "title": "Issued At",
+          "type": "string"
+        },
+        "expires_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expires At"
+        },
+        "revoked_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Revoked At"
+        },
+        "token_sha256": {
+          "default": "",
+          "title": "Token Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "agent"
+      ],
+      "title": "Visa",
+      "type": "object"
     }
   },
   "additionalProperties": true,
@@ -730,8 +1381,8 @@
   "properties": {
     "version": {
       "type": "string",
-      "const": "2.2",
-      "default": "2.2"
+      "const": "3.1",
+      "default": "3.1"
     },
     "updated_at": {
       "format": "date-time",
@@ -806,14 +1457,44 @@
       "title": "Sources",
       "type": "array"
     },
+    "holder": {
+      "additionalProperties": true,
+      "title": "Holder",
+      "type": "object"
+    },
+    "agents": {
+      "additionalProperties": {
+        "$ref": "#/$defs/AgentRecord"
+      },
+      "title": "Agents",
+      "type": "object"
+    },
+    "visas": {
+      "items": {
+        "$ref": "#/$defs/Visa"
+      },
+      "title": "Visas",
+      "type": "array"
+    },
+    "stamps": {
+      "items": {
+        "$ref": "#/$defs/Stamp"
+      },
+      "title": "Stamps",
+      "type": "array"
+    },
     "meta": {
       "additionalProperties": true,
       "title": "Meta",
       "type": "object"
+    },
+    "head": {
+      "type": "string",
+      "description": "SHA-256 Merkle root over the sorted stamp ids"
     }
   },
   "title": "Passport",
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/schemas/passport-2.2.schema.json"
+  "$id": "https://github.com/Sozo-Analytics-Lab/sozograph/blob/main/schemas/passport-3.1.schema.json"
 }

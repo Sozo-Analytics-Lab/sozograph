@@ -165,6 +165,25 @@ def test_month_precision_and_temporal_query():
     assert "travelled" in result and "stayed home" not in result
 
 
+@pytest.mark.parametrize("bounds", [
+    {"query": "What happened in February 2026?"},
+    {"date_from": "2026-02-01", "date_to": "2026-02-28"},
+])
+def test_event_filter_does_not_substitute_discussion_time(bounds):
+    discussed = datetime(2026, 2, 15, tzinfo=timezone.utc)
+    p = Passport(updated_at=discussed, observations=[
+        Observation(text="Alice travelled.", source="event", ts=T, when="2026-02"),
+        Observation(text="Alice recalled an undated holiday.", source="unknown", ts=discussed),
+        Observation(text="Alice stayed home.", source="outside", ts=discussed, when="2026-03-01"),
+    ])
+    result = p.recall(**bounds)
+    assert {r.record["source"] for r in result.selected} == {"event"}
+    unknown = next(r for r in result.dropped if r.record.get("source") == "unknown")
+    assert unknown.reason == "unknown event time"
+    assert "undated holiday" in p.context()
+    assert "undated holiday" in p.context(query="holiday")
+
+
 def test_loop_completion_and_subject_scope():
     from sozograph import OpenLoop
     p = Passport(open_loops=[OpenLoop(item="Book flight", subject="Alice", source="s")])

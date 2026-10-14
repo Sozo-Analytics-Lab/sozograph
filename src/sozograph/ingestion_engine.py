@@ -12,7 +12,7 @@ from .utils import sha256_json, stable_id
 
 def ingest_into(engine, data, *, passport, meta, hint, batch, max_segment_tokens,
                 retention, extraction_revision, reextract, max_extra_calls,
-                max_split_depth, clock, checkpoint):
+                max_split_depth, clock, checkpoint, origin="agent_inferred", author=None):
     if retention not in {"none", "excerpts", "full"}:
         raise ValueError("retention must be none, excerpts, or full")
     if max_extra_calls < 0 or max_split_depth < 0:
@@ -46,6 +46,8 @@ def ingest_into(engine, data, *, passport, meta, hint, batch, max_segment_tokens
               "retention": retention, "subject": meta.get("subject", ""),
               "segment_tokens": max_segment_tokens, "batch": batch}
     revision = sha256_json(config)
+    writer = author or ("sozograph:extractor:" + provider_spec)
+    log_backed = base.log_backed
     ledger = base.meta.setdefault("ingest", {}).setdefault(revision, {})
     report = {"complete": False, "calls": 0, "skipped": 0, "rejected_records": 0,
               "saturated_units": 0, "units": {}, "revision": extraction_revision,
@@ -86,12 +88,21 @@ def ingest_into(engine, data, *, passport, meta, hint, batch, max_segment_tokens
         if update is not None:
             attach(update, segment, retention=retention, subject=str(meta.get("subject") or ""))
             if reextract and not needs_retry:
-                for bucket in ("facts", "prefs", "observations", "episodes", "open_loops"):
-                    rows = getattr(base, bucket)
-                    rows[:] = [r for r in rows if r.source != sid or set(r.source_ids) - {sid}]
+                if log_backed:
+                    _retire_source(base, sid, writer, now())
+                else:
+                    for bucket in ("facts", "prefs", "observations", "episodes", "open_loops"):
+                        rows = getattr(base, bucket)
+                        rows[:] = [r for r in rows if r.source != sid or set(r.source_ids) - {sid}]
             base.upsert_source(source_record(segment, retention=retention, update=update))
-            _, result = merge_passport_update(base, now=now(), **update)
-            stats.append(result)
+            if log_backed:
+                from .protocol import apply_update
+                outcome = apply_update(base, update, author=writer, origin=origin, now=now())
+                report["quarantined"] = report.get("quarantined", 0) + len(outcome.quarantined)
+                report["rejected_records"] += len(outcome.rejected)
+            else:
+                _, result = merge_passport_update(base, now=now(), **update)
+                stats.append(result)
         else:
             base.upsert_source(source_record(segment, retention=retention))
         ok = not needs_retry
@@ -152,3 +163,14 @@ def normalize_database_text(interactions):
     for it in interactions:
         if it.type not in {"chat", "transcript", "note", "email", "message"} and it.data:
             it.text = json.dumps(it.data, ensure_ascii=False, default=str)
+
+
+def _retire_source(passport, sid, writer, moment):
+    """Re-extraction on a log-backed passport: the extractor corrects its own earlier stamps."""
+    from .protocol import propose
+    targets = [s.id for s in passport.stamps
+               if s.author == writer and s.claim and not s.redacted and s.claim.get("source") == sid
+               and not (set(s.claim.get("source_ids") or []) - {sid})]
+    if targets:
+        propose(passport, [{"op": "correct", "targets": [t], "claim": {}} for t in targets],
+                author=writer, now=moment)

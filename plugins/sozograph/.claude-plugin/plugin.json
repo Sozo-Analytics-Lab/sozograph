@@ -1,0 +1,28 @@
+{
+  "name": "sozograph",
+  "displayName": "SozoGraph passport",
+  "version": "0.4.0",
+  "description": "The holder's portable memory in Claude Code: a session-start brief, the passport Skill, and a local MCP server that reads and writes stamps under a visa.",
+  "author": {
+    "name": "Rairo Mukamuri",
+    "url": "https://github.com/rapha18th"
+  },
+  "homepage": "https://github.com/Sozo-Analytics-Lab/sozograph",
+  "repository": "https://github.com/Sozo-Analytics-Lab/sozograph",
+  "license": "MIT",
+  "keywords": ["memory", "portable-memory", "mcp", "passport", "agents"],
+  "userConfig": {
+    "passport": {
+      "type": "string",
+      "title": "Passport file",
+      "description": "Path to the passport JSON. Run `sozograph init` to create one.",
+      "default": "~/.sozograph/passport.json"
+    },
+    "domains": {
+      "type": "string",
+      "title": "Visa domains",
+      "description": "Comma-separated domains Claude Code may read and write, for example software,documents,research.",
+      "default": "software,documents,research"
+    }
+  }
+}

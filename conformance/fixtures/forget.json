@@ -1,0 +1,107 @@
+{
+  "name": "forget",
+  "format": "3.1",
+  "input": {
+    "stamps": [
+      {
+        "id": "st_9b93d176dc80524c28da3850d8f2ac14",
+        "section": "facts",
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1798848000000-00000-local",
+        "redacted": true
+      },
+      {
+        "id": "st_da332f9fd6ad67b3859458c0a49ede7b",
+        "section": "facts",
+        "claim": {
+          "value": "44",
+          "domains": [
+            "shopping"
+          ],
+          "key": "shoe_size",
+          "source": "holder",
+          "ts": "2027-01-02T00:00:00+00:00",
+          "kind": "preference"
+        },
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1798848000000-00001-local"
+      },
+      {
+        "id": "st_e5e7b47a977e911d7eb0fbc39292f477",
+        "op": "forget",
+        "targets": [
+          "st_9b93d176dc80524c28da3850d8f2ac14"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1798848000000-00002-local",
+        "seen": "1798848000000-00001-local",
+        "reason": "holder request"
+      }
+    ],
+    "agents": {
+      "claude-code": {
+        "id": "claude-code",
+        "name": "claude-code",
+        "model": "claude-opus-5-5",
+        "home_domains": [
+          "software"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "muse": {
+        "id": "muse",
+        "name": "muse",
+        "model": "muse-spark",
+        "home_domains": [
+          "shopping"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "notes-a": {
+        "id": "notes-a",
+        "name": "notes-a",
+        "home_domains": [
+          "research"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "notes-b": {
+        "id": "notes-b",
+        "name": "notes-b",
+        "home_domains": [
+          "documents"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      }
+    }
+  },
+  "expected": {
+    "head": "f9f4405b9e082cd5483d2de5df7948b73d83b9de28fcaa9b436e743b5cfe229e",
+    "facts": [
+      {
+        "stamp_ids": [
+          "st_da332f9fd6ad67b3859458c0a49ede7b"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "domains": [
+          "shopping"
+        ],
+        "kind": "preference",
+        "key": "shoe_size",
+        "value": "44",
+        "ts": "2027-01-02T00:00:00Z",
+        "source": "holder"
+      }
+    ],
+    "prefs": [],
+    "entities": [],
+    "open_loops": [],
+    "episodes": [],
+    "observations": [],
+    "contradictions": []
+  }
+}

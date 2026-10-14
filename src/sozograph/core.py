@@ -100,6 +100,8 @@ class SozoGraph:
         max_split_depth: int = 2,
         clock=None,
         checkpoint=None,
+        origin: str = "agent_inferred",
+        author: str | None = None,
     ) -> Passport:
         """
         Ingest a transcript, a database object, or a list of either.
@@ -109,13 +111,18 @@ class SozoGraph:
         Interactions are batched into token-bounded segments by default, one
         extraction call each. Pass `batch=False` to extract per interaction,
         which costs one call per turn and is almost never what you want.
+
+        On a log-backed passport (Passport 3.1 with stamps) the extraction is
+        written as stamps by `author` (default `sozograph:extractor:<provider>`)
+        with `origin` (default agent_inferred; pass user_direct for the
+        holder's own transcripts), and passes the admission gate.
         """
         from .ingestion_engine import ingest_into
         return ingest_into(self, data, passport=passport, meta=meta, hint=hint, batch=batch,
                            max_segment_tokens=max_segment_tokens, retention=retention,
                            extraction_revision=extraction_revision, reextract=reextract,
                            max_extra_calls=max_extra_calls, max_split_depth=max_split_depth,
-                           clock=clock, checkpoint=checkpoint)
+                           clock=clock, checkpoint=checkpoint, origin=origin, author=author)
 
     def plan(
         self,

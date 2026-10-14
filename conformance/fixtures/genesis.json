@@ -1,0 +1,102 @@
+{
+  "name": "genesis",
+  "format": "3.1",
+  "input": {
+    "stamps": [
+      {
+        "id": "st_dd9f7335935a549386f66740703d2c65",
+        "section": "facts",
+        "claim": {
+          "key": "home_city",
+          "value": "Gweru",
+          "ts": "2027-01-01T00:00:00Z",
+          "source": "s1"
+        },
+        "author": "import:passport",
+        "origin": "imported",
+        "hlc": "1798761600000-00000-genesis"
+      },
+      {
+        "id": "st_b518feb86d6d90180bc1f321e812c29a",
+        "section": "observations",
+        "claim": {
+          "text": "Hiked Nyanga.",
+          "ts": "2027-01-01T00:00:00Z",
+          "when": "2026-12-20",
+          "precision": "day",
+          "source": "s1"
+        },
+        "author": "import:passport",
+        "origin": "imported",
+        "hlc": "1798761600000-00001-genesis"
+      },
+      {
+        "id": "st_c71d2d291f9988d2b6bf9341ae82c007",
+        "section": "contradictions",
+        "claim": {
+          "key": "home_city",
+          "old": "Bulawayo",
+          "new": "Gweru",
+          "ts_old": "2026-10-03T00:00:00Z",
+          "ts_new": "2027-01-01T00:00:00Z",
+          "source_old": "s0",
+          "source_new": "s1"
+        },
+        "author": "import:passport",
+        "origin": "imported",
+        "hlc": "1798761600000-00002-genesis"
+      }
+    ],
+    "agents": {}
+  },
+  "expected": {
+    "head": "bcc2f3e9c11a74e43ec9407a95389da90be58a3bb96688158f81ce50583d7874",
+    "facts": [
+      {
+        "stamp_ids": [
+          "st_dd9f7335935a549386f66740703d2c65"
+        ],
+        "author": "import:passport",
+        "origin": "imported",
+        "key": "home_city",
+        "value": "Gweru",
+        "ts": "2027-01-01T00:00:00Z",
+        "source": "s1"
+      }
+    ],
+    "prefs": [],
+    "entities": [],
+    "open_loops": [],
+    "episodes": [],
+    "observations": [
+      {
+        "stamp_ids": [
+          "st_b518feb86d6d90180bc1f321e812c29a"
+        ],
+        "author": "import:passport",
+        "origin": "imported",
+        "text": "Hiked Nyanga.",
+        "ts": "2027-01-01T00:00:00Z",
+        "when": "2026-12-20",
+        "precision": "day",
+        "source": "s1"
+      }
+    ],
+    "contradictions": [
+      {
+        "stamp_ids": [
+          "st_c71d2d291f9988d2b6bf9341ae82c007"
+        ],
+        "author": "import:passport",
+        "origin": "imported",
+        "key": "home_city",
+        "old": "Bulawayo",
+        "new": "Gweru",
+        "ts_old": "2026-10-03T00:00:00Z",
+        "ts_new": "2027-01-01T00:00:00Z",
+        "source_old": "s0",
+        "source_new": "s1"
+      }
+    ]
+  }
+}

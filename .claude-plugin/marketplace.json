@@ -1,0 +1,17 @@
+{
+  "name": "sozograph",
+  "description": "SozoGraph: the portable memory layer for agents. One passport, a visa per agent, every write a stamp.",
+  "owner": {
+    "name": "Sozo Analytics Lab",
+    "url": "https://github.com/Sozo-Analytics-Lab"
+  },
+  "plugins": [
+    {
+      "name": "sozograph",
+      "source": "./plugins/sozograph",
+      "description": "The holder's portable memory in Claude Code: session-start brief, passport Skill, local MCP server.",
+      "category": "memory",
+      "tags": ["memory", "mcp", "portable-memory"]
+    }
+  ]
+}

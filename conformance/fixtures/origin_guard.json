@@ -1,0 +1,101 @@
+{
+  "name": "origin_guard",
+  "format": "3.1",
+  "input": {
+    "stamps": [
+      {
+        "id": "st_abac5ef207fb55a8db64929bf3684235",
+        "section": "facts",
+        "claim": {
+          "value": "Harare",
+          "key": "home_city",
+          "source": "holder",
+          "ts": "2027-01-02T00:00:00+00:00",
+          "kind": "residence"
+        },
+        "author": "holder",
+        "origin": "user_direct",
+        "hlc": "1798848000000-00000-local"
+      },
+      {
+        "id": "st_ac87e1e658942434243c801aea010f9b",
+        "section": "facts",
+        "claim": {
+          "value": "Lisbon",
+          "domains": [
+            "general"
+          ],
+          "key": "home_city",
+          "source": "muse",
+          "ts": "2027-01-03T00:00:00+00:00",
+          "kind": "residence"
+        },
+        "author": "muse",
+        "visa": "visa_a67cf27c8fb3c574",
+        "origin": "third_party",
+        "hlc": "1798934400000-00000-local",
+        "seen": "1798848000000-00000-local"
+      }
+    ],
+    "agents": {
+      "claude-code": {
+        "id": "claude-code",
+        "name": "claude-code",
+        "model": "claude-opus-5-5",
+        "home_domains": [
+          "software"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "muse": {
+        "id": "muse",
+        "name": "muse",
+        "model": "muse-spark",
+        "home_domains": [
+          "shopping"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z",
+        "last_seen": "2027-01-03T00:00:00Z"
+      },
+      "notes-a": {
+        "id": "notes-a",
+        "name": "notes-a",
+        "home_domains": [
+          "research"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      },
+      "notes-b": {
+        "id": "notes-b",
+        "name": "notes-b",
+        "home_domains": [
+          "documents"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z"
+      }
+    }
+  },
+  "expected": {
+    "head": "687728ef7eefb0ca5e2df7a88ad3cd0496ae82f6bac1c2bf6e6bde10e2ae9692",
+    "facts": [
+      {
+        "stamp_ids": [
+          "st_abac5ef207fb55a8db64929bf3684235"
+        ],
+        "author": "holder",
+        "origin": "user_direct",
+        "kind": "residence",
+        "key": "home_city",
+        "value": "Harare",
+        "ts": "2027-01-02T00:00:00Z",
+        "source": "holder"
+      }
+    ],
+    "prefs": [],
+    "entities": [],
+    "open_loops": [],
+    "episodes": [],
+    "observations": [],
+    "contradictions": []
+  }
+}

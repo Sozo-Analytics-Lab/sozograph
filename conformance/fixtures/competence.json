@@ -1,0 +1,196 @@
+{
+  "name": "competence",
+  "format": "3.1",
+  "input": {
+    "stamps": [
+      {
+        "id": "st_4318d27443bb492d909872b1f18d45d9",
+        "section": "facts",
+        "claim": {
+          "value": "ThinkPad",
+          "ts": "2027-01-03T00:00:00+00:00",
+          "key": "laptop",
+          "source": "claude-code",
+          "domains": [
+            "software"
+          ],
+          "kind": "fact"
+        },
+        "author": "claude-code",
+        "visa": "visa_d0f7ef2b10fb08ab",
+        "hlc": "1798934400000-00000-local"
+      },
+      {
+        "id": "st_d2768eccc3058f578cd88635a934f1a3",
+        "section": "facts",
+        "claim": {
+          "value": "MacBook",
+          "ts": "2027-01-03T00:00:00+00:00",
+          "key": "laptop",
+          "source": "muse",
+          "domains": [
+            "shopping"
+          ],
+          "kind": "fact"
+        },
+        "author": "muse",
+        "visa": "visa_38d79725c36357a8",
+        "hlc": "1798934400000-00001-local",
+        "seen": "1798934400000-00000-local"
+      },
+      {
+        "id": "st_813059ac67ccbe48974c8ea09a945780",
+        "section": "facts",
+        "claim": {
+          "value": "Friday",
+          "ts": "2027-01-03T00:00:00+00:00",
+          "key": "deadline",
+          "source": "notes-a",
+          "domains": [
+            "research"
+          ],
+          "kind": "fact"
+        },
+        "author": "notes-a",
+        "visa": "visa_e27708000e40decd",
+        "hlc": "1798934400000-00002-local",
+        "seen": "1798934400000-00001-local"
+      },
+      {
+        "id": "st_e55ba2afbe8ddda5bd568e8f11e4ac93",
+        "section": "facts",
+        "claim": {
+          "value": "Monday",
+          "ts": "2027-01-03T00:00:00+00:00",
+          "key": "deadline",
+          "source": "notes-b",
+          "domains": [
+            "documents"
+          ],
+          "kind": "fact"
+        },
+        "author": "notes-b",
+        "visa": "visa_b8b101a9034c9047",
+        "hlc": "1798934400000-00003-local",
+        "seen": "1798934400000-00002-local"
+      }
+    ],
+    "agents": {
+      "claude-code": {
+        "id": "claude-code",
+        "name": "claude-code",
+        "model": "claude-opus-5-5",
+        "home_domains": [
+          "software"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z",
+        "last_seen": "2027-01-03T00:00:00Z"
+      },
+      "muse": {
+        "id": "muse",
+        "name": "muse",
+        "model": "muse-spark",
+        "home_domains": [
+          "shopping"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z",
+        "last_seen": "2027-01-03T00:00:00Z"
+      },
+      "notes-a": {
+        "id": "notes-a",
+        "name": "notes-a",
+        "home_domains": [
+          "research"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z",
+        "last_seen": "2027-01-03T00:00:00Z"
+      },
+      "notes-b": {
+        "id": "notes-b",
+        "name": "notes-b",
+        "home_domains": [
+          "documents"
+        ],
+        "first_seen": "2027-01-01T00:00:00Z",
+        "last_seen": "2027-01-03T00:00:00Z"
+      }
+    }
+  },
+  "expected": {
+    "head": "84a1ef0e5e9f15e8e76ab97dd959b56a7b45a562ea7f49e2333387f643f3fd15",
+    "facts": [
+      {
+        "stamp_ids": [
+          "st_813059ac67ccbe48974c8ea09a945780"
+        ],
+        "author": "notes-a",
+        "origin": "agent_inferred",
+        "domains": [
+          "research"
+        ],
+        "kind": "fact",
+        "status": "disputed",
+        "key": "deadline",
+        "value": "Friday",
+        "ts": "2027-01-03T00:00:00Z",
+        "source": "notes-a"
+      },
+      {
+        "stamp_ids": [
+          "st_e55ba2afbe8ddda5bd568e8f11e4ac93"
+        ],
+        "author": "notes-b",
+        "origin": "agent_inferred",
+        "domains": [
+          "documents"
+        ],
+        "kind": "fact",
+        "status": "disputed",
+        "key": "deadline",
+        "value": "Monday",
+        "ts": "2027-01-03T00:00:00Z",
+        "source": "notes-b"
+      },
+      {
+        "stamp_ids": [
+          "st_4318d27443bb492d909872b1f18d45d9"
+        ],
+        "author": "claude-code",
+        "origin": "agent_inferred",
+        "domains": [
+          "software"
+        ],
+        "kind": "fact",
+        "key": "laptop",
+        "value": "ThinkPad",
+        "ts": "2027-01-03T00:00:00Z",
+        "source": "claude-code"
+      }
+    ],
+    "prefs": [],
+    "entities": [],
+    "open_loops": [],
+    "episodes": [],
+    "observations": [],
+    "contradictions": [
+      {
+        "stamp_ids": [
+          "st_813059ac67ccbe48974c8ea09a945780",
+          "st_e55ba2afbe8ddda5bd568e8f11e4ac93"
+        ],
+        "domains": [
+          "documents",
+          "research"
+        ],
+        "status": "disputed",
+        "key": "deadline",
+        "old": "Friday",
+        "new": "Monday",
+        "ts_old": "2027-01-03T00:00:00Z",
+        "ts_new": "2027-01-03T00:00:00Z",
+        "source_old": "notes-a",
+        "source_new": "notes-b"
+      }
+    ]
+  }
+}
